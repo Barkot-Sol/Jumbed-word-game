@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getRandomWord, checkAnswer, getWordAnswer, WORDS } from './words.js';
+import { getRandomWord, checkAnswer, getWordAnswer, getWordHint, WORDS } from './words.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,9 +18,10 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// API: Get a random jumbled word
+// API: Get a random jumbled word (with optional difficulty: easy | medium | hard)
 app.get('/api/words/random', (req, res) => {
-  const word = getRandomWord();
+  const { difficulty } = req.query;
+  const word = getRandomWord(difficulty);
   res.json(word);
 });
 
@@ -56,6 +57,21 @@ app.post('/api/words/reveal', (req, res) => {
   }
 
   res.json({ answer });
+});
+
+// API: Get hint for a word (category, definition, or first-letter)
+app.post('/api/words/hint', (req, res) => {
+  const { id, type } = req.body;
+  if (id === undefined || !type) {
+    return res.status(400).json({ error: 'Missing word id or hint type' });
+  }
+
+  const hintResult = getWordHint(id, type);
+  if (!hintResult) {
+    return res.status(404).json({ error: 'Hint not found for word' });
+  }
+
+  res.json(hintResult);
 });
 
 // API: Get total words count / list overview (for future expansions)
