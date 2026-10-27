@@ -69,15 +69,53 @@ function App() {
   const [isTimeUp, setIsTimeUp] = useState(false);
   const [revealedAnswer, setRevealedAnswer] = useState(null);
 
-  // Score & Streak tracking
+  // Score & Streak tracking (Individual streak & best streak per mode; casual mode has no streaks)
   const [score, setScore] = useState(0);
-  const [streak, setStreak] = useState(0);
-  const [highScore, setHighScore] = useState(() => {
-    return parseInt(localStorage.getItem('jumble_high_score') || '0', 10);
+  const [streaks, setStreaks] = useState({
+    speed: 0,
+    blitz: 0,
+    endless: 0,
+    hardcore: 0
   });
-  const [bestStreak, setBestStreak] = useState(() => {
-    return parseInt(localStorage.getItem('jumble_best_streak') || '0', 10);
+  const [bestStreaks, setBestStreaks] = useState(() => {
+    const saved = localStorage.getItem('jumble_best_streaks_v2');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error('Failed to parse best streaks:', e);
+      }
+    }
+    const legacyBest = parseInt(localStorage.getItem('jumble_best_streak') || '0', 10);
+    return {
+      speed: legacyBest,
+      blitz: 0,
+      endless: 0,
+      hardcore: 0
+    };
   });
+  const [highScores, setHighScores] = useState(() => {
+    const saved = localStorage.getItem('jumble_high_scores_v2');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error('Failed to parse high scores:', e);
+      }
+    }
+    const legacyHigh = parseInt(localStorage.getItem('jumble_high_score') || '0', 10);
+    return {
+      speed: legacyHigh,
+      blitz: 0,
+      casual: 0,
+      endless: 0,
+      hardcore: 0
+    };
+  });
+
+  const currentStreak = mode === 'casual' ? 0 : (streaks[mode] || 0);
+  const currentBestStreak = mode === 'casual' ? 0 : (bestStreaks[mode] || 0);
+  const currentHighScore = highScores[mode] || 0;
 
   // Non-blocking quick feedback
   const [successToast, setSuccessToast] = useState(null);
@@ -117,6 +155,18 @@ function App() {
   const isLocked = gameStarted && !isTimeUp && !isRoundComplete;
 
   // Fetch word reveal when time runs out (Loss in timed mode)
+  // Helper to focus the current active/empty letter box
+  const focusActiveBox = useCallback(() => {
+    if (!gameStarted || isTimeUp || isRoundComplete || showQuitModal) return;
+    const emptyIndex = letters.findIndex((l) => !l);
+    const targetIdx = emptyIndex !== -1 ? emptyIndex : Math.max(0, letters.length - 1);
+    const targetEl = boxRefs.current[targetIdx] || inputRef.current;
+    if (targetEl) {
+      targetEl.focus();
+    }
+  }, [gameStarted, isTimeUp, isRoundComplete, showQuitModal, letters]);
+
+  // Fetch word reveal when time runs out (Loss in timed mode)
   const handleTimeUp = useCallback(async (wordId) => {
     setIsTimeUp(true);
     setIsWrong(false);
@@ -127,14 +177,16 @@ function App() {
       clearInterval(timerRef.current);
     }
 
-    // Break active streak
-    setStreak((prev) => {
-      if (prev > 0) {
-        setStreakBrokenNotice(true);
-        setTimeout(() => setStreakBrokenNotice(false), 3000);
-      }
-      return 0;
-    });
+    // Break active streak for current mode (casual mode has no streak)
+    if (mode !== 'casual') {
+      setStreaks((prev) => {
+        if ((prev[mode] || 0) > 0) {
+          setStreakBrokenNotice(true);
+          setTimeout(() => setStreakBrokenNotice(false), 3000);
+        }
+        return { ...prev, [mode]: 0 };
+      });
+    }
 
     try {
       const res = await fetch('/api/words/reveal', {
@@ -149,7 +201,7 @@ function App() {
     } catch (err) {
       console.error('Error revealing answer:', err);
     }
-  }, []);
+  }, [mode]);
 
   // Fetch a new jumbled word from Express backend by difficulty
   const fetchNewWord = useCallback(
@@ -242,6 +294,7 @@ function App() {
       console.error('Error fetching hint:', err);
     } finally {
       setLoadingHint(null);
+      focusActiveBox();
     }
   };
 
@@ -312,7 +365,9 @@ function App() {
     }
 
     setScore(0);
-    setStreak(0);
+    if (mode !== 'casual') {
+      setStreaks((prev) => ({ ...prev, [mode]: 0 }));
+    }
     setCurrentWordNumber(1);
     setRoundSolvedCount(0);
     setIsRoundComplete(false);
@@ -331,7 +386,7 @@ function App() {
       'first-letter': 1
     });
     setScore(0);
-    setStreak(0);
+    setStreaks((prev) => ({ ...prev, hardcore: 0 }));
     setCurrentWordNumber(1);
     setRoundSolvedCount(0);
     setIsRoundComplete(false);
@@ -343,7 +398,9 @@ function App() {
   // Restart standard round from completion
   const handleRestartRound = async () => {
     setScore(0);
-    setStreak(0);
+    if (mode !== 'casual') {
+      setStreaks((prev) => ({ ...prev, [mode]: 0 }));
+    }
     setCurrentWordNumber(1);
     setRoundSolvedCount(0);
     setIsRoundComplete(false);
@@ -466,60 +523,69 @@ function App() {
         setIsInputFlashing(true);
         setTimeout(() => setIsInputFlashing(false), 300);
 
-        // Calculate score & streak
-        const newStreak = streak + 1;
-        setStreak(newStreak);
-
-        // Base points according to that specific word's difficulty (10 easy, 12 medium, 15 hard)
+        // Word difficulty base points (10 easy, 12 medium, 15 hard)
         const wordDiff = currentWord.difficulty || (difficulty === 'random' ? 'medium' : difficulty);
         const basePts = DIFFICULTY_CONFIG[wordDiff]?.basePoints || 12;
-        const streakBonus = (newStreak - 1) * 2;
-        let pointsEarned = basePts + streakBonus;
 
-        // In Hardcore mode, bonus multiplier for high stakes!
-        if (mode === 'hardcore') {
-          pointsEarned += 5;
-        }
-
-        // Speed bonus if solved with half or more time remaining
-        const maxTime = getActiveDuration(mode);
+        let pointsEarned = basePts;
         let hasSpeedBonus = false;
-        if (maxTime && timeLeft >= Math.floor(maxTime / 2)) {
-          pointsEarned += 5;
-          hasSpeedBonus = true;
+        let newStreak = 0;
+
+        // Streaks and streak bonus are completely disabled for casual mode
+        if (mode !== 'casual') {
+          newStreak = (streaks[mode] || 0) + 1;
+          setStreaks((prev) => ({ ...prev, [mode]: newStreak }));
+
+          const streakBonus = (newStreak - 1) * 2;
+          pointsEarned += streakBonus;
+
+          if (mode === 'hardcore') {
+            pointsEarned += 5;
+          }
+
+          const maxTime = getActiveDuration(mode);
+          if (maxTime && timeLeft >= Math.floor(maxTime / 2)) {
+            pointsEarned += 5;
+            hasSpeedBonus = true;
+          }
+
+          if (newStreak > (bestStreaks[mode] || 0)) {
+            setBestStreaks((prev) => {
+              const updated = { ...prev, [mode]: newStreak };
+              localStorage.setItem('jumble_best_streaks_v2', JSON.stringify(updated));
+              return updated;
+            });
+          }
         }
 
         const newScore = score + pointsEarned;
         setScore(newScore);
 
+        // Update high score per mode
+        if (newScore > (highScores[mode] || 0)) {
+          setHighScores((prev) => {
+            const updated = { ...prev, [mode]: newScore };
+            localStorage.setItem('jumble_high_scores_v2', JSON.stringify(updated));
+            return updated;
+          });
+        }
+
         // Increment solved counter for this round
         const newSolvedCount = roundSolvedCount + 1;
         setRoundSolvedCount(newSolvedCount);
 
-        // Show non-blocking floating toast
+        // Floating toast (hide streak info in casual mode)
         if (toastTimeoutRef.current) {
           clearTimeout(toastTimeoutRef.current);
         }
         setSuccessToast({
           points: pointsEarned,
-          streak: newStreak,
-          speedBonus: hasSpeedBonus
+          streak: mode === 'casual' ? 0 : newStreak,
+          speedBonus: mode === 'casual' ? false : hasSpeedBonus
         });
         toastTimeoutRef.current = setTimeout(() => {
           setSuccessToast(null);
         }, 1800);
-
-        // Update high score
-        if (newScore > highScore) {
-          setHighScore(newScore);
-          localStorage.setItem('jumble_high_score', newScore.toString());
-        }
-
-        // Update best streak
-        if (newStreak > bestStreak) {
-          setBestStreak(newStreak);
-          localStorage.setItem('jumble_best_streak', newStreak.toString());
-        }
 
         // Check if round limit reached
         if (!isEndlessMode && currentWordNumber >= targetWordsCount) {
@@ -533,11 +599,12 @@ function App() {
         setCurrentWordNumber((prev) => prev + 1);
         fetchNewWord();
       } else {
+        // Red shaking of text boxes on wrong answer
         setIsWrong(true);
-        if (boxRefs.current[0]) {
-          boxRefs.current[0].focus();
-          boxRefs.current[0].select();
-        }
+        setTimeout(() => {
+          setIsWrong(false);
+        }, 550);
+        focusActiveBox();
       }
     } catch (err) {
       console.error('Error checking answer:', err);
@@ -553,10 +620,15 @@ function App() {
       setHardcoreSkipsLeft((prev) => prev - 1);
     }
 
-    if (!isTimeUp && streak > 0) {
-      setStreak(0);
-      setStreakBrokenNotice(true);
-      setTimeout(() => setStreakBrokenNotice(false), 3000);
+    if (mode !== 'casual') {
+      const activeStreak = streaks[mode] || 0;
+      if (!isTimeUp && activeStreak > 0) {
+        setStreaks((prev) => ({ ...prev, [mode]: 0 }));
+        setStreakBrokenNotice(true);
+        setTimeout(() => setStreakBrokenNotice(false), 3000);
+      } else {
+        setStreakBrokenNotice(false);
+      }
     } else {
       setStreakBrokenNotice(false);
     }
@@ -621,8 +693,8 @@ function App() {
     endTimeRef.current = null;
     pausedRemainingMsRef.current = null;
 
-    if (streak > 0) {
-      setStreak(0);
+    if (mode !== 'casual') {
+      setStreaks((prev) => ({ ...prev, [mode]: 0 }));
     }
 
     setGameStarted(false);
@@ -662,6 +734,76 @@ function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showQuitModal]);
+
+  // Keep focus on active box when clicking anywhere on website (excluding controls/modals)
+  useEffect(() => {
+    const handleGlobalClick = (e) => {
+      if (!gameStarted || isTimeUp || isRoundComplete || showQuitModal) return;
+      if (e.target.closest('input, select, textarea, .modal-box')) return;
+      if (e.target.closest('button')) return;
+      focusActiveBox();
+    };
+
+    window.addEventListener('click', handleGlobalClick);
+    return () => window.removeEventListener('click', handleGlobalClick);
+  }, [focusActiveBox, gameStarted, isTimeUp, isRoundComplete, showQuitModal]);
+
+  // Global keydown listener so typing letters, Backspace, or Enter always types into boxes
+  useEffect(() => {
+    const handleGlobalKeyDown = (e) => {
+      if (!gameStarted || isTimeUp || isRoundComplete || showQuitModal || loading) return;
+
+      const activeEl = document.activeElement;
+      if (activeEl?.classList?.contains('wordle-box')) return;
+      if (['input', 'textarea', 'select'].includes(activeEl?.tagName?.toLowerCase())) return;
+
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleSubmit();
+        return;
+      }
+
+      if (e.key === 'Backspace') {
+        e.preventDefault();
+        let lastFilled = -1;
+        for (let i = letters.length - 1; i >= 0; i--) {
+          if (letters[i]) {
+            lastFilled = i;
+            break;
+          }
+        }
+        if (lastFilled !== -1) {
+          const newLetters = [...letters];
+          newLetters[lastFilled] = '';
+          setLetters(newLetters);
+          setUserInput(newLetters.join(''));
+          boxRefs.current[lastFilled]?.focus();
+        } else {
+          boxRefs.current[0]?.focus();
+        }
+        return;
+      }
+
+      if (/^[a-zA-Z]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        const char = e.key.toUpperCase();
+        const emptyIdx = letters.findIndex((l) => !l);
+        const targetIdx = emptyIdx !== -1 ? emptyIdx : Math.max(0, letters.length - 1);
+        const newLetters = [...letters];
+        newLetters[targetIdx] = char;
+        setLetters(newLetters);
+        setUserInput(newLetters.join(''));
+        if (isWrong) setIsWrong(false);
+
+        const nextFocus = Math.min(targetIdx + 1, letters.length - 1);
+        boxRefs.current[nextFocus]?.focus();
+        boxRefs.current[nextFocus]?.select();
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [gameStarted, isTimeUp, isRoundComplete, showQuitModal, loading, letters, isWrong]);
 
   // Timer color severity
   const maxDuration = getActiveDuration(mode);
@@ -845,19 +987,23 @@ function App() {
           <span className="stat-label">Score</span>
           <span className="stat-value score">{score}</span>
         </div>
-        <div className={`stat-card ${streak > 0 ? 'streak-active' : ''}`}>
-          <span className="stat-label">Streak</span>
-          <span className="stat-value streak">
-            {streak > 0 ? `${streak}` : '0'}
-          </span>
-        </div>
-        <div className="stat-card">
-          <span className="stat-label">Best Streak</span>
-          <span className="stat-value best">{bestStreak}</span>
-        </div>
+        {mode !== 'casual' && (
+          <>
+            <div className={`stat-card ${currentStreak > 0 ? 'streak-active' : ''}`}>
+              <span className="stat-label">Streak</span>
+              <span className="stat-value streak">
+                {currentStreak > 0 ? `${currentStreak}` : '0'}
+              </span>
+            </div>
+            <div className="stat-card">
+              <span className="stat-label">Best Streak</span>
+              <span className="stat-value best">{currentBestStreak}</span>
+            </div>
+          </>
+        )}
         <div className="stat-card">
           <span className="stat-label">High Score</span>
-          <span className="stat-value">{highScore}</span>
+          <span className="stat-value">{currentHighScore}</span>
         </div>
       </section>
 
@@ -892,10 +1038,10 @@ function App() {
             {successToast && (
               <div className="success-toast">
                 <span>Correct! +{successToast.points} pts</span>
-                {successToast.streak > 1 && (
+                {mode !== 'casual' && successToast.streak > 1 && (
                   <span>(Streak x{successToast.streak})</span>
                 )}
-                {successToast.speedBonus && <span>(Speed Bonus!)</span>}
+                {mode !== 'casual' && successToast.speedBonus && <span>(Speed Bonus!)</span>}
               </div>
             )}
           </div>
@@ -924,10 +1070,12 @@ function App() {
                   <div className="round-stat-item-label">Final Score</div>
                   <div className="round-stat-item-value">{score}</div>
                 </div>
-                <div className="round-stat-item">
-                  <div className="round-stat-item-label">Best Streak</div>
-                  <div className="round-stat-item-value">{bestStreak}</div>
-                </div>
+                {mode !== 'casual' && (
+                  <div className="round-stat-item">
+                    <div className="round-stat-item-label">Best Streak</div>
+                    <div className="round-stat-item-value">{currentBestStreak}</div>
+                  </div>
+                )}
               </div>
               <div className="button-group">
                 <button id="again-btn" onClick={handleRestartRound}>
@@ -957,7 +1105,7 @@ function App() {
               )}
               {mode === 'hardcore' && (
                 <p className="hardcore-summary">
-                  Final Score: {score} • Best Run Streak: {streak}
+                  Final Score: {score} • Best Run Streak: {currentStreak}
                 </p>
               )}
               <div className="button-group">
@@ -1003,7 +1151,7 @@ function App() {
               <p className="outcome">{currentWord.jumbled}</p>
 
               {/* Hints System */}
-              <div className="hints-panel">
+              <div className="hints-panel" onMouseDown={(e) => e.preventDefault()}>
                 <div className="hints-header">
                   <span>
                     Hints {mode === 'hardcore' ? '(1 of each for entire run)' : ''}
@@ -1013,7 +1161,11 @@ function App() {
                   <button
                     type="button"
                     className={`hint-btn ${hints.category ? 'revealed' : ''}`}
-                    onClick={() => handleGetHint('category')}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      handleGetHint('category');
+                      focusActiveBox();
+                    }}
                     disabled={
                       Boolean(hints.category) ||
                       (mode === 'hardcore' && hardcoreHintsLeft.category <= 0) ||
@@ -1032,7 +1184,11 @@ function App() {
                   <button
                     type="button"
                     className={`hint-btn ${hints.definition ? 'revealed' : ''}`}
-                    onClick={() => handleGetHint('definition')}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      handleGetHint('definition');
+                      focusActiveBox();
+                    }}
                     disabled={
                       Boolean(hints.definition) ||
                       (mode === 'hardcore' && hardcoreHintsLeft.definition <= 0) ||
@@ -1051,7 +1207,11 @@ function App() {
                   <button
                     type="button"
                     className={`hint-btn ${hints['first-letter'] ? 'revealed' : ''}`}
-                    onClick={() => handleGetHint('first-letter')}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      handleGetHint('first-letter');
+                      focusActiveBox();
+                    }}
                     disabled={
                       Boolean(hints['first-letter']) ||
                       (mode === 'hardcore' && hardcoreHintsLeft['first-letter'] <= 0) ||
@@ -1070,7 +1230,7 @@ function App() {
                 </div>
 
                 {(hints.category || hints.definition || hints['first-letter']) && (
-                  <div className="hint-cards">
+                  <div className="hint-cards" onMouseDown={(e) => e.preventDefault()}>
                     {hints.category && (
                       <div className="hint-card category">
                         <span className="hint-card-label">Category:</span>
@@ -1166,8 +1326,7 @@ function App() {
                   </button>
                 </div>
               </form>
-              {isWrong && <p className="error">Wrong! Try again</p>}
-              {streakBrokenNotice && (
+              {mode !== 'casual' && streakBrokenNotice && (
                 <p className="streak-notice">Streak reset to 0!</p>
               )}
             </>
@@ -1182,8 +1341,8 @@ function App() {
             <span className="modal-paused-tag">Clock Paused</span>
             <h2 className="modal-title">Quit Current Mode?</h2>
             <p className="modal-message">
-              {streak > 0
-                ? `Are you sure you want to quit? Your active streak of ${streak} will be reset.`
+              {mode !== 'casual' && currentStreak > 0
+                ? `Are you sure you want to quit? Your active streak of ${currentStreak} will be reset.`
                 : 'Are you sure you want to quit and return to mode selection?'}
             </p>
             <div className="modal-actions">

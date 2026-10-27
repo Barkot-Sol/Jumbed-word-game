@@ -666,7 +666,15 @@ h1 {
 }
 
 .wordle-row.shake {
-  animation: wordleShake 0.4s ease-in-out;
+  animation: wordleShake 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+/* Red styling on text boxes when answer is wrong */
+.wordle-row.shake .wordle-box:not(.box-correct) {
+  border-color: #dc2626 !important;
+  background-color: #fef2f2 !important;
+  color: #991b1b !important;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.35) !important;
 }
 
 .wordle-row.bounce {
@@ -735,8 +743,8 @@ h1 {
 
 @keyframes wordleShake {
   0%, 100% { transform: translateX(0); }
-  20%, 60% { transform: translateX(-7px); }
-  40%, 80% { transform: translateX(7px); }
+  15%, 45%, 75% { transform: translateX(-8px); }
+  30%, 60%, 90% { transform: translateX(8px); }
 }
 
 @keyframes wordleBounce {
