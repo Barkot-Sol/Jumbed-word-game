@@ -1,18 +1,18 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 
 const MODE_CONFIG = {
-  speed: { label: '⚡ Speed (20s)', duration: 20 },
-  blitz: { label: '⏱️ Blitz (10s)', duration: 10 },
-  casual: { label: '🧘 Casual', duration: null },
-  endless: { label: '♾️ Endless', duration: null, isEndless: true },
-  hardcore: { label: '💀 Hardcore (15s)', duration: 15, isHardcore: true }
+  speed: { label: 'Speed (20s)', duration: 20 },
+  blitz: { label: 'Blitz (10s)', duration: 10 },
+  casual: { label: 'Casual', duration: null },
+  endless: { label: 'Endless', duration: null, isEndless: true },
+  hardcore: { label: 'Hardcore (15s)', duration: 15, isHardcore: true }
 };
 
 const DIFFICULTY_CONFIG = {
-  easy: { label: '🟢 Easy', desc: '5-6 letters', basePoints: 10, badgeClass: 'easy' },
-  medium: { label: '🟡 Medium', desc: '7-8 letters', basePoints: 12, badgeClass: 'medium' },
-  hard: { label: '🔴 Hard', desc: '9+ letters', basePoints: 15, badgeClass: 'hard' },
-  random: { label: '🎲 Random', desc: 'Mixed', basePoints: 12, badgeClass: 'random' }
+  easy: { label: 'Easy', desc: '5-6 letters', basePoints: 10, badgeClass: 'easy' },
+  medium: { label: 'Medium', desc: '7-8 letters', basePoints: 12, badgeClass: 'medium' },
+  hard: { label: 'Hard', desc: '9+ letters', basePoints: 15, badgeClass: 'hard' },
+  random: { label: 'Random', desc: 'Mixed', basePoints: 12, badgeClass: 'random' }
 };
 
 const WORD_COUNT_OPTIONS = [
@@ -26,6 +26,7 @@ function App() {
   const [gameStarted, setGameStarted] = useState(false);
   const [currentWord, setCurrentWord] = useState(null);
   const [userInput, setUserInput] = useState('');
+  const [letters, setLetters] = useState([]);
   const [isWrong, setIsWrong] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -87,6 +88,7 @@ function App() {
   const [showQuitModal, setShowQuitModal] = useState(false);
 
   const inputRef = useRef(null);
+  const boxRefs = useRef([]);
   const timerRef = useRef(null);
   const endTimeRef = useRef(null);
   const pausedRemainingMsRef = useRef(null);
@@ -97,8 +99,8 @@ function App() {
   const targetWordsCount = isEndlessMode
     ? Infinity
     : wordCountOption === 'custom'
-    ? Math.max(1, parseInt(customWordCount, 10) || 10)
-    : parseInt(wordCountOption, 10) || 10;
+      ? Math.max(1, parseInt(customWordCount, 10) || 10)
+      : parseInt(wordCountOption, 10) || 10;
 
   // Active duration for timer based on mode
   const getActiveDuration = useCallback(
@@ -157,6 +159,7 @@ function App() {
       setIsTimeUp(false);
       setRevealedAnswer(null);
       setUserInput('');
+      setLetters([]);
       setHints({ category: null, definition: null, 'first-letter': null });
       setLoadingHint(null);
 
@@ -185,6 +188,21 @@ function App() {
     },
     [mode, difficulty, getActiveDuration]
   );
+
+  // Synchronize letters array whenever current word updates
+  useEffect(() => {
+    if (currentWord?.jumbled) {
+      const len = currentWord.jumbled.length;
+      setLetters(Array(len).fill(''));
+      setUserInput('');
+      setTimeout(() => {
+        boxRefs.current[0]?.focus();
+      }, 50);
+    } else {
+      setLetters([]);
+      setUserInput('');
+    }
+  }, [currentWord]);
 
   // Request a specific hint from server
   const handleGetHint = async (type) => {
@@ -341,10 +359,92 @@ function App() {
     }
   }, [currentWord, gameStarted, isTimeUp, isRoundComplete, showQuitModal]);
 
+  // Handle typing and auto-advancing across Wordle letter boxes
+  const handleBoxChange = (index, e) => {
+    const val = e.target.value;
+    const char = val.slice(-1).toUpperCase();
+
+    if (!val) {
+      const newLetters = [...letters];
+      newLetters[index] = '';
+      setLetters(newLetters);
+      setUserInput(newLetters.join(''));
+      if (isWrong) setIsWrong(false);
+      return;
+    }
+
+    if (!/^[A-Z]$/.test(char)) return;
+
+    const newLetters = [...letters];
+    newLetters[index] = char;
+    setLetters(newLetters);
+    setUserInput(newLetters.join(''));
+    if (isWrong) setIsWrong(false);
+
+    if (index < letters.length - 1) {
+      boxRefs.current[index + 1]?.focus();
+      boxRefs.current[index + 1]?.select();
+    }
+  };
+
+  const handleBoxKeyDown = (index, e) => {
+    if (isWrong) setIsWrong(false);
+
+    if (e.key === 'Backspace') {
+      if (!letters[index] && index > 0) {
+        e.preventDefault();
+        const newLetters = [...letters];
+        newLetters[index - 1] = '';
+        setLetters(newLetters);
+        setUserInput(newLetters.join(''));
+        boxRefs.current[index - 1]?.focus();
+        boxRefs.current[index - 1]?.select();
+      } else if (letters[index]) {
+        e.preventDefault();
+        const newLetters = [...letters];
+        newLetters[index] = '';
+        setLetters(newLetters);
+        setUserInput(newLetters.join(''));
+      }
+    } else if (e.key === 'ArrowLeft' && index > 0) {
+      e.preventDefault();
+      boxRefs.current[index - 1]?.focus();
+      boxRefs.current[index - 1]?.select();
+    } else if (e.key === 'ArrowRight' && index < letters.length - 1) {
+      e.preventDefault();
+      boxRefs.current[index + 1]?.focus();
+      boxRefs.current[index + 1]?.select();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      handleSubmit(e);
+    }
+  };
+
+  const handleBoxPaste = (index, e) => {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData('text').trim().replace(/[^a-zA-Z]/g, '').toUpperCase();
+    if (!pasted) return;
+
+    const newLetters = [...letters];
+    let lastIndex = index;
+    for (let i = 0; i < pasted.length && index + i < letters.length; i++) {
+      newLetters[index + i] = pasted[i];
+      lastIndex = index + i;
+    }
+    setLetters(newLetters);
+    setUserInput(newLetters.join(''));
+    if (isWrong) setIsWrong(false);
+
+    const nextFocus = Math.min(lastIndex + 1, letters.length - 1);
+    boxRefs.current[nextFocus]?.focus();
+    boxRefs.current[nextFocus]?.select();
+  };
+
   // Handle checking submitted answer
   const handleSubmit = async (e) => {
     if (e) e.preventDefault();
-    if (!currentWord || !userInput.trim() || loading || isTimeUp || isRoundComplete || showQuitModal) return;
+    const answerAttempt = letters.join('').trim() || userInput.trim();
+    if (!currentWord || !answerAttempt || loading || isTimeUp || isRoundComplete || showQuitModal) return;
 
     try {
       const res = await fetch('/api/words/check', {
@@ -352,7 +452,7 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: currentWord.id,
-          answer: userInput
+          answer: answerAttempt
         })
       });
 
@@ -434,8 +534,9 @@ function App() {
         fetchNewWord();
       } else {
         setIsWrong(true);
-        if (inputRef.current) {
-          inputRef.current.focus();
+        if (boxRefs.current[0]) {
+          boxRefs.current[0].focus();
+          boxRefs.current[0].select();
         }
       }
     } catch (err) {
@@ -531,6 +632,7 @@ function App() {
     setRevealedAnswer(null);
     setCurrentWord(null);
     setUserInput('');
+    setLetters([]);
     setHints({ category: null, definition: null, 'first-letter': null });
     setSuccessToast(null);
     setStreakBrokenNotice(false);
@@ -570,10 +672,10 @@ function App() {
   const timerStatusClass = showQuitModal
     ? 'paused'
     : isCritical
-    ? 'critical'
-    : isWarning
-    ? 'warning'
-    : '';
+      ? 'critical'
+      : isWarning
+        ? 'warning'
+        : '';
 
   // Get active display difficulty for badge
   const displayDifficulty = currentWord?.difficulty || (difficulty === 'random' ? 'medium' : difficulty);
@@ -624,7 +726,7 @@ function App() {
                     setTimeLeft(null);
                   }}
                 >
-                  🧘 Untimed
+                  Untimed
                 </button>
                 <button
                   type="button"
@@ -635,7 +737,7 @@ function App() {
                     setTimeLeft(20);
                   }}
                 >
-                  ⏱️ Timed (20s)
+                  Timed (20s)
                 </button>
               </nav>
             </div>
@@ -701,7 +803,7 @@ function App() {
 
         {isLocked && (
           <span className="mode-lock-hint">
-            🔒 Settings locked • Finish round or Quit to change
+            Settings locked • Finish round or Quit to change
           </span>
         )}
       </div>
@@ -710,28 +812,28 @@ function App() {
       {mode === 'hardcore' && (
         <section className="hardcore-hud" aria-label="Hardcore inventory">
           <div className="hardcore-hud-title">
-            <span>💀 Hardcore Rules</span>
+            <span>Hardcore Rules</span>
           </div>
           <div className="hardcore-badges">
             <span
               className={`hardcore-pill ${hardcoreSkipsLeft > 0 ? 'active' : 'empty'}`}
             >
-              ⏭️ Skips: {hardcoreSkipsLeft}/3
+              Skips: {hardcoreSkipsLeft}/3
             </span>
             <span
               className={`hardcore-pill ${hardcoreHintsLeft.category > 0 ? 'active' : 'empty'}`}
             >
-              🏷️ Category: {hardcoreHintsLeft.category}/1
+              Category: {hardcoreHintsLeft.category}/1
             </span>
             <span
               className={`hardcore-pill ${hardcoreHintsLeft.definition > 0 ? 'active' : 'empty'}`}
             >
-              📖 Definition: {hardcoreHintsLeft.definition}/1
+              Definition: {hardcoreHintsLeft.definition}/1
             </span>
             <span
               className={`hardcore-pill ${hardcoreHintsLeft['first-letter'] > 0 ? 'active' : 'empty'}`}
             >
-              🔤 1st Letter: {hardcoreHintsLeft['first-letter']}/1
+              1st Letter: {hardcoreHintsLeft['first-letter']}/1
             </span>
           </div>
         </section>
@@ -746,16 +848,16 @@ function App() {
         <div className={`stat-card ${streak > 0 ? 'streak-active' : ''}`}>
           <span className="stat-label">Streak</span>
           <span className="stat-value streak">
-            {streak > 0 ? `🔥 ${streak}` : '0'}
+            {streak > 0 ? `${streak}` : '0'}
           </span>
         </div>
         <div className="stat-card">
           <span className="stat-label">Best Streak</span>
-          <span className="stat-value best">🏆 {bestStreak}</span>
+          <span className="stat-value best">{bestStreak}</span>
         </div>
         <div className="stat-card">
           <span className="stat-label">High Score</span>
-          <span className="stat-value">⭐ {highScore}</span>
+          <span className="stat-value">{highScore}</span>
         </div>
       </section>
 
@@ -773,7 +875,7 @@ function App() {
               <div className="timer-header">
                 <span>Time Remaining</span>
                 <span className={`timer-badge ${timerStatusClass}`}>
-                  {showQuitModal ? '⏸️ Paused' : `⏱️ ${timeLeft}s`}
+                  {showQuitModal ? 'Paused' : `${timeLeft}s`}
                 </span>
               </div>
               <div className="timer-bar-track">
@@ -789,11 +891,11 @@ function App() {
           <div className="toast-container" aria-live="polite">
             {successToast && (
               <div className="success-toast">
-                <span>✨ Correct! +{successToast.points} pts</span>
+                <span>Correct! +{successToast.points} pts</span>
                 {successToast.streak > 1 && (
-                  <span>(🔥 Streak x{successToast.streak})</span>
+                  <span>(Streak x{successToast.streak})</span>
                 )}
-                {successToast.speedBonus && <span>(⚡ Speed Bonus!)</span>}
+                {successToast.speedBonus && <span>(Speed Bonus!)</span>}
               </div>
             )}
           </div>
@@ -803,7 +905,7 @@ function App() {
           {/* Round Complete / Victory Screen */}
           {!loading && isRoundComplete && (
             <div className="round-complete-card">
-              <h2 className="round-complete-title">🎉 Round Complete!</h2>
+              <h2 className="round-complete-title">Round Complete!</h2>
               <p>You finished all {targetWordsCount} words!</p>
               <div className="round-stats-grid">
                 <div className="round-stat-item">
@@ -824,7 +926,7 @@ function App() {
                 </div>
                 <div className="round-stat-item">
                   <div className="round-stat-item-label">Best Streak</div>
-                  <div className="round-stat-item-value">🔥 {bestStreak}</div>
+                  <div className="round-stat-item-value">{bestStreak}</div>
                 </div>
               </div>
               <div className="button-group">
@@ -846,7 +948,7 @@ function App() {
           {!loading && isTimeUp && !isRoundComplete && (
             <>
               <p className="outcome time-up">
-                {mode === 'hardcore' ? 'Game Over 💀' : "Time's Up! ⏰"}
+                {mode === 'hardcore' ? 'Game Over' : "Time's Up!"}
               </p>
               {revealedAnswer && (
                 <p className="revealed-answer">
@@ -893,7 +995,7 @@ function App() {
                   className={`difficulty-tag ${DIFFICULTY_CONFIG[displayDifficulty]?.badgeClass}`}
                 >
                   {difficulty === 'random'
-                    ? `🎲 Random (${displayDifficulty.toUpperCase()})`
+                    ? `Random (${displayDifficulty.toUpperCase()})`
                     : DIFFICULTY_CONFIG[displayDifficulty]?.label}
                 </span>
               </div>
@@ -904,7 +1006,7 @@ function App() {
               <div className="hints-panel">
                 <div className="hints-header">
                   <span>
-                    💡 Hints {mode === 'hardcore' ? '(1 of each for entire run)' : ''}
+                    Hints {mode === 'hardcore' ? '(1 of each for entire run)' : ''}
                   </span>
                 </div>
                 <div className="hint-buttons-group">
@@ -919,14 +1021,13 @@ function App() {
                       showQuitModal
                     }
                   >
-                    🏷️{' '}
                     {hints.category
                       ? 'Category (Active)'
                       : mode === 'hardcore'
-                      ? `Category (${hardcoreHintsLeft.category} left)`
-                      : loadingHint === 'category'
-                      ? 'Loading...'
-                      : 'Category'}
+                        ? `Category (${hardcoreHintsLeft.category} left)`
+                        : loadingHint === 'category'
+                          ? 'Loading...'
+                          : 'Category'}
                   </button>
                   <button
                     type="button"
@@ -939,14 +1040,13 @@ function App() {
                       showQuitModal
                     }
                   >
-                    📖{' '}
                     {hints.definition
                       ? 'Definition (Active)'
                       : mode === 'hardcore'
-                      ? `Definition (${hardcoreHintsLeft.definition} left)`
-                      : loadingHint === 'definition'
-                      ? 'Loading...'
-                      : 'Definition'}
+                        ? `Definition (${hardcoreHintsLeft.definition} left)`
+                        : loadingHint === 'definition'
+                          ? 'Loading...'
+                          : 'Definition'}
                   </button>
                   <button
                     type="button"
@@ -959,14 +1059,13 @@ function App() {
                       showQuitModal
                     }
                   >
-                    🔤{' '}
                     {hints['first-letter']
                       ? '1st Letter (Active)'
                       : mode === 'hardcore'
-                      ? `1st Letter (${hardcoreHintsLeft['first-letter']} left)`
-                      : loadingHint === 'first-letter'
-                      ? 'Loading...'
-                      : 'Reveal 1st Letter'}
+                        ? `1st Letter (${hardcoreHintsLeft['first-letter']} left)`
+                        : loadingHint === 'first-letter'
+                          ? 'Loading...'
+                          : 'Reveal 1st Letter'}
                   </button>
                 </div>
 
@@ -974,19 +1073,19 @@ function App() {
                   <div className="hint-cards">
                     {hints.category && (
                       <div className="hint-card category">
-                        <span className="hint-card-label">🏷️ Category:</span>
+                        <span className="hint-card-label">Category:</span>
                         <span className="hint-card-content">{hints.category}</span>
                       </div>
                     )}
                     {hints.definition && (
                       <div className="hint-card definition">
-                        <span className="hint-card-label">📖 Definition:</span>
+                        <span className="hint-card-label">Definition:</span>
                         <span className="hint-card-content">{hints.definition}</span>
                       </div>
                     )}
                     {hints['first-letter'] && (
                       <div className="hint-card first-letter">
-                        <span className="hint-card-label">🔤 First Letter:</span>
+                        <span className="hint-card-label">First Letter:</span>
                         <span className="hint-card-content">
                           Starts with <strong>{hints['first-letter']}</strong>...
                         </span>
@@ -996,19 +1095,47 @@ function App() {
                 )}
               </div>
 
-              <form onSubmit={handleSubmit}>
-                <div>
-                  <input
-                    ref={inputRef}
-                    type="text"
-                    placeholder="Enter answer"
-                    id="input"
-                    className={isInputFlashing ? 'flash-correct' : ''}
-                    value={userInput}
-                    onChange={(e) => setUserInput(e.target.value)}
-                    autoComplete="off"
-                    disabled={showQuitModal}
-                  />
+              <form onSubmit={handleSubmit} className="wordle-form">
+                <div
+                  className={`wordle-row ${isWrong ? 'shake' : ''} ${isInputFlashing ? 'bounce' : ''}`}
+                  role="group"
+                  aria-label="Word letters input"
+                >
+                  {Array.from({ length: currentWord.jumbled.length }).map((_, index) => {
+                    const letter = letters[index] || '';
+                    const isCorrectPlace =
+                      mode === 'casual' &&
+                      Boolean(currentWord.answer) &&
+                      Boolean(letter) &&
+                      letter.toLowerCase() === currentWord.answer[index]?.toLowerCase();
+                    const isGreen = isCorrectPlace || isInputFlashing;
+
+                    return (
+                      <input
+                        key={index}
+                        ref={(el) => {
+                          boxRefs.current[index] = el;
+                          if (index === 0) inputRef.current = el;
+                        }}
+                        type="text"
+                        inputMode="text"
+                        maxLength={1}
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="characters"
+                        spellCheck="false"
+                        id={index === 0 ? 'input' : `input-${index}`}
+                        className={`wordle-box ${letter ? 'has-letter' : ''} ${isGreen ? 'box-correct' : ''}`}
+                        value={letter}
+                        onChange={(e) => handleBoxChange(index, e)}
+                        onKeyDown={(e) => handleBoxKeyDown(index, e)}
+                        onPaste={(e) => handleBoxPaste(index, e)}
+                        onFocus={(e) => e.target.select()}
+                        disabled={showQuitModal}
+                        aria-label={`Letter ${index + 1} of ${currentWord.jumbled.length}`}
+                      />
+                    );
+                  })}
                 </div>
                 <div className="button-group">
                   <button type="submit" id="submit-btn" disabled={showQuitModal}>
@@ -1052,11 +1179,11 @@ function App() {
       {showQuitModal && (
         <div className="modal-overlay" role="dialog" aria-modal="true">
           <div className="modal-box">
-            <span className="modal-paused-tag">⏸️ Clock Paused</span>
+            <span className="modal-paused-tag">Clock Paused</span>
             <h2 className="modal-title">Quit Current Mode?</h2>
             <p className="modal-message">
               {streak > 0
-                ? `Are you sure you want to quit? Your active streak of 🔥 ${streak} will be reset.`
+                ? `Are you sure you want to quit? Your active streak of ${streak} will be reset.`
                 : 'Are you sure you want to quit and return to mode selection?'}
             </p>
             <div className="modal-actions">

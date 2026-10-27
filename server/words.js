@@ -366,7 +366,8 @@ export function getRandomWord(difficulty = null) {
   return {
     id: word.id,
     jumbled: word.jumbled,
-    difficulty: word.difficulty
+    difficulty: word.difficulty,
+    answer: word.answer
   };
 }
 

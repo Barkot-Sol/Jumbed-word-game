@@ -644,29 +644,106 @@ h1 {
   flex-wrap: wrap;
 }
 
-input {
-  padding: 12px 16px;
-  margin: 15px 0px 20px;
-  width: 320px;
-  max-width: 90%;
-  font-size: 22px;
-  border: 2px solid #ccc;
-  border-radius: 8px;
-  outline: none;
+/* Wordle-style Letter Boxes */
+.wordle-form {
+  margin: 15px auto 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  max-width: 100%;
+}
+
+.wordle-row {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: clamp(5px, 1.4vw, 10px);
+  padding: 8px 4px;
+  flex-wrap: nowrap;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.wordle-row.shake {
+  animation: wordleShake 0.4s ease-in-out;
+}
+
+.wordle-row.bounce {
+  animation: wordleBounce 0.5s ease;
+}
+
+.wordle-box {
+  width: clamp(38px, 9vw, 56px);
+  height: clamp(44px, 10vw, 62px);
+  max-width: none;
+  font-size: clamp(20px, 4.5vw, 28px);
+  font-weight: 700;
+  text-transform: uppercase;
   text-align: center;
-  letter-spacing: 2px;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+  border: 2px solid #cbd5e1;
+  border-radius: 8px;
+  background-color: #ffffff;
+  color: #1e293b;
+  outline: none;
+  cursor: text;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.04);
+  transition: border-color 0.15s ease, background-color 0.2s ease, transform 0.15s ease, color 0.2s ease, box-shadow 0.2s ease;
+  padding: 0;
+  margin: 0;
+  caret-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-input:focus {
-  border-color: rgb(3, 99, 3);
-  box-shadow: 0 0 0 4px rgba(3, 99, 3, 0.15);
-}
-
-input.flash-correct {
+.wordle-box:focus {
   border-color: #2e7d32;
-  background-color: #e8f5e9;
-  box-shadow: 0 0 0 4px rgba(46, 125, 50, 0.25);
+  box-shadow: 0 0 0 3px rgba(46, 125, 50, 0.25);
+  transform: translateY(-2px);
+  background-color: #fbfdfb;
+}
+
+.wordle-box.has-letter {
+  border-color: #64748b;
+  animation: wordlePop 0.12s ease-in-out;
+}
+
+.wordle-box.has-letter:focus {
+  border-color: #2e7d32;
+}
+
+/* Green box when letters are found in the right place in casual mode or on correct solution */
+.wordle-box.box-correct {
+  background-color: #2e7d32 !important;
+  border-color: #2e7d32 !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 10px rgba(46, 125, 50, 0.35);
+  animation: wordleFlip 0.25s ease;
+}
+
+@keyframes wordlePop {
+  0% { transform: scale(0.9); }
+  50% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+
+@keyframes wordleFlip {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+
+@keyframes wordleShake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-7px); }
+  40%, 80% { transform: translateX(7px); }
+}
+
+@keyframes wordleBounce {
+  0%, 20% { transform: translateY(0); }
+  40% { transform: translateY(-12px); }
+  60% { transform: translateY(-5px); }
+  80%, 100% { transform: translateY(0); }
 }
 
 button {
