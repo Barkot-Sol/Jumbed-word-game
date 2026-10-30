@@ -31,13 +31,15 @@ function App() {
   const [loading, setLoading] = useState(false);
 
   // Difficulty: 'easy' | 'medium' | 'hard' | 'random'
-  const [difficulty, setDifficulty] = useState('medium');
+  const [difficulty, setDifficulty] = useState('random');
 
   // Game Mode: 'speed' | 'blitz' | 'casual' | 'endless' | 'hardcore'
   const [mode, setMode] = useState('speed');
 
-  // Endless Mode Timer Toggle (Timed 20s vs Untimed)
-  const [endlessTimed, setEndlessTimed] = useState(false);
+  // Endless Mode Timer Settings ('untimed' | '60' | '120' | 'custom')
+  const [endlessTimerOption, setEndlessTimerOption] = useState('60');
+  const [customEndlessTime, setCustomEndlessTime] = useState(90);
+  const [endlessInitialDuration, setEndlessInitialDuration] = useState(60);
 
   // Word Count Limits (for non-endless modes)
   const [wordCountOption, setWordCountOption] = useState('10');
@@ -121,6 +123,7 @@ function App() {
   const [successToast, setSuccessToast] = useState(null);
   const [isInputFlashing, setIsInputFlashing] = useState(false);
   const [streakBrokenNotice, setStreakBrokenNotice] = useState(false);
+  const [skipPenaltyNotice, setSkipPenaltyNotice] = useState(false);
 
   // Quit confirmation & clock pause state
   const [showQuitModal, setShowQuitModal] = useState(false);
@@ -134,21 +137,32 @@ function App() {
 
   // Effective round target word count
   const isEndlessMode = mode === 'endless';
+  const isEndlessTimed = isEndlessMode && endlessTimerOption !== 'untimed';
   const targetWordsCount = isEndlessMode
     ? Infinity
     : wordCountOption === 'custom'
       ? Math.max(1, parseInt(customWordCount, 10) || 10)
       : parseInt(wordCountOption, 10) || 10;
 
+  // Initial duration for endless timed mode
+  const getEndlessInitialDuration = useCallback(() => {
+    if (endlessTimerOption === '60') return 60;
+    if (endlessTimerOption === '120') return 120;
+    if (endlessTimerOption === 'custom') {
+      return Math.max(5, parseInt(customEndlessTime, 10) || 60);
+    }
+    return null;
+  }, [endlessTimerOption, customEndlessTime]);
+
   // Active duration for timer based on mode
   const getActiveDuration = useCallback(
     (targetMode = mode) => {
       if (targetMode === 'endless') {
-        return endlessTimed ? 20 : null;
+        return endlessTimerOption !== 'untimed' ? getEndlessInitialDuration() : null;
       }
       return MODE_CONFIG[targetMode]?.duration || null;
     },
-    [mode, endlessTimed]
+    [mode, endlessTimerOption, getEndlessInitialDuration]
   );
 
   // User is locked in settings while a game is actively running
@@ -205,7 +219,7 @@ function App() {
 
   // Fetch a new jumbled word from Express backend by difficulty
   const fetchNewWord = useCallback(
-    async (activeMode = mode, activeDifficulty = difficulty) => {
+    async (activeMode = mode, activeDifficulty = difficulty, isInitialStart = false) => {
       setLoading(true);
       setIsWrong(false);
       setIsTimeUp(false);
@@ -216,17 +230,34 @@ function App() {
       setLoadingHint(null);
 
       // Initialize countdown timer with precision timestamp
-      const duration = getActiveDuration(activeMode);
-      if (duration) {
-        endTimeRef.current = Date.now() + duration * 1000;
-        pausedRemainingMsRef.current = null;
-        setTimeLeft(duration);
+      if (activeMode === 'endless') {
+        if (endlessTimerOption !== 'untimed') {
+          if (isInitialStart) {
+            const duration = getEndlessInitialDuration();
+            setEndlessInitialDuration(duration);
+            endTimeRef.current = Date.now() + duration * 1000;
+            pausedRemainingMsRef.current = null;
+            setTimeLeft(duration);
+          }
+        } else {
+          endTimeRef.current = null;
+          pausedRemainingMsRef.current = null;
+          setTimeLeft(null);
+        }
       } else {
-        endTimeRef.current = null;
-        pausedRemainingMsRef.current = null;
-        setTimeLeft(null);
+        const duration = MODE_CONFIG[activeMode]?.duration || null;
+        if (duration) {
+          endTimeRef.current = Date.now() + duration * 1000;
+          pausedRemainingMsRef.current = null;
+          setTimeLeft(duration);
+        } else {
+          endTimeRef.current = null;
+          pausedRemainingMsRef.current = null;
+          setTimeLeft(null);
+        }
       }
 
+      const fetchStart = Date.now();
       try {
         const res = await fetch(`/api/words/random?difficulty=${activeDifficulty}`);
         if (!res.ok) throw new Error('Failed to load word');
@@ -235,10 +266,14 @@ function App() {
       } catch (err) {
         console.error('Error fetching random word:', err);
       } finally {
+        if (activeMode === 'endless' && endlessTimerOption !== 'untimed' && !isInitialStart && endTimeRef.current) {
+          const latency = Date.now() - fetchStart;
+          endTimeRef.current += latency;
+        }
         setLoading(false);
       }
     },
-    [mode, difficulty, getActiveDuration]
+    [mode, difficulty, endlessTimerOption, getEndlessInitialDuration]
   );
 
   // Synchronize letters array whenever current word updates
@@ -371,10 +406,28 @@ function App() {
     setCurrentWordNumber(1);
     setRoundSolvedCount(0);
     setIsRoundComplete(false);
+    setIsTimeUp(false);
+    setRevealedAnswer(null);
     setGameStarted(true);
     setStreakBrokenNotice(false);
+    setSkipPenaltyNotice(false);
     setSuccessToast(null);
-    await fetchNewWord();
+    await fetchNewWord(mode, difficulty, true);
+  };
+
+  // Restart endless timed run from Game Over
+  const handleRestartEndlessTimed = async () => {
+    setScore(0);
+    setStreaks((prev) => ({ ...prev, endless: 0 }));
+    setCurrentWordNumber(1);
+    setRoundSolvedCount(0);
+    setIsRoundComplete(false);
+    setIsTimeUp(false);
+    setRevealedAnswer(null);
+    setStreakBrokenNotice(false);
+    setSkipPenaltyNotice(false);
+    setSuccessToast(null);
+    await fetchNewWord(mode, difficulty, true);
   };
 
   // Restart hardcore run from Game Over
@@ -390,9 +443,12 @@ function App() {
     setCurrentWordNumber(1);
     setRoundSolvedCount(0);
     setIsRoundComplete(false);
+    setIsTimeUp(false);
+    setRevealedAnswer(null);
     setStreakBrokenNotice(false);
+    setSkipPenaltyNotice(false);
     setSuccessToast(null);
-    await fetchNewWord();
+    await fetchNewWord(mode, difficulty, true);
   };
 
   // Restart standard round from completion
@@ -518,10 +574,17 @@ function App() {
       if (data.correct) {
         setIsWrong(false);
         setStreakBrokenNotice(false);
+        setSkipPenaltyNotice(false);
 
         // Flash input border green for quick delightful feedback
         setIsInputFlashing(true);
         setTimeout(() => setIsInputFlashing(false), 300);
+
+        // In endless timed mode, gain 5 seconds!
+        if (isEndlessTimed && endTimeRef.current) {
+          endTimeRef.current += 5000;
+          setTimeLeft((prev) => (prev !== null ? prev + 5 : 5));
+        }
 
         // Word difficulty base points (10 easy, 12 medium, 15 hard)
         const wordDiff = currentWord.difficulty || (difficulty === 'random' ? 'medium' : difficulty);
@@ -543,10 +606,12 @@ function App() {
             pointsEarned += 5;
           }
 
-          const maxTime = getActiveDuration(mode);
-          if (maxTime && timeLeft >= Math.floor(maxTime / 2)) {
-            pointsEarned += 5;
-            hasSpeedBonus = true;
+          if (mode !== 'endless') {
+            const maxTime = getActiveDuration(mode);
+            if (maxTime && timeLeft >= Math.floor(maxTime / 2)) {
+              pointsEarned += 5;
+              hasSpeedBonus = true;
+            }
           }
 
           if (newStreak > (bestStreaks[mode] || 0)) {
@@ -581,7 +646,8 @@ function App() {
         setSuccessToast({
           points: pointsEarned,
           streak: mode === 'casual' ? 0 : newStreak,
-          speedBonus: mode === 'casual' ? false : hasSpeedBonus
+          speedBonus: mode === 'casual' ? false : hasSpeedBonus,
+          timeBonus: isEndlessTimed ? 5 : null
         });
         toastTimeoutRef.current = setTimeout(() => {
           setSuccessToast(null);
@@ -597,7 +663,7 @@ function App() {
 
         // Advance to next word
         setCurrentWordNumber((prev) => prev + 1);
-        fetchNewWord();
+        fetchNewWord(mode, difficulty, false);
       } else {
         // Red shaking of text boxes on wrong answer
         setIsWrong(true);
@@ -618,6 +684,23 @@ function App() {
     if (mode === 'hardcore') {
       if (hardcoreSkipsLeft <= 0) return;
       setHardcoreSkipsLeft((prev) => prev - 1);
+    }
+
+    // In endless timed, user loses 5 seconds
+    if (isEndlessTimed && endTimeRef.current) {
+      endTimeRef.current -= 5000;
+      const remainingMs = endTimeRef.current - Date.now();
+      const remainingSec = Math.ceil(remainingMs / 1000);
+
+      if (remainingSec <= 0) {
+        setTimeLeft(0);
+        handleTimeUp(currentWord?.id);
+        return;
+      }
+
+      setTimeLeft(remainingSec);
+      setSkipPenaltyNotice(true);
+      setTimeout(() => setSkipPenaltyNotice(false), 2500);
     }
 
     if (mode !== 'casual') {
@@ -642,7 +725,7 @@ function App() {
     }
 
     setCurrentWordNumber((prev) => prev + 1);
-    fetchNewWord();
+    fetchNewWord(mode, difficulty, false);
   };
 
   // Advance word after time-up (loss)
@@ -708,14 +791,47 @@ function App() {
     setHints({ category: null, definition: null, 'first-letter': null });
     setSuccessToast(null);
     setStreakBrokenNotice(false);
-    setTimeLeft(getActiveDuration(mode));
+    setSkipPenaltyNotice(false);
+    setTimeLeft(mode === 'endless' ? (endlessTimerOption === 'untimed' ? null : getEndlessInitialDuration()) : getActiveDuration(mode));
   };
 
   // Switch game mode (Only allowed when not locked in active gameplay)
   const handleModeChange = (newMode) => {
     if (isLocked || newMode === mode) return;
     setMode(newMode);
-    setTimeLeft(getActiveDuration(newMode));
+    if (newMode === 'endless') {
+      setTimeLeft(endlessTimerOption !== 'untimed' ? getEndlessInitialDuration() : null);
+    } else {
+      setTimeLeft(MODE_CONFIG[newMode]?.duration || null);
+    }
+  };
+
+  // Switch endless timer mode option ('untimed' | '60' | '120' | 'custom')
+  const handleEndlessTimerOptionChange = (option) => {
+    if (isLocked) return;
+    setEndlessTimerOption(option);
+    if (option === 'untimed') {
+      setTimeLeft(null);
+    } else if (option === '60') {
+      setTimeLeft(60);
+      setEndlessInitialDuration(60);
+    } else if (option === '120') {
+      setTimeLeft(120);
+      setEndlessInitialDuration(120);
+    } else if (option === 'custom') {
+      const val = Math.max(5, parseInt(customEndlessTime, 10) || 60);
+      setTimeLeft(val);
+      setEndlessInitialDuration(val);
+    }
+  };
+
+  const handleCustomEndlessTimeChange = (e) => {
+    const val = Math.max(5, Math.min(3600, parseInt(e.target.value, 10) || 5));
+    setCustomEndlessTime(val);
+    if (endlessTimerOption === 'custom') {
+      setTimeLeft(val);
+      setEndlessInitialDuration(val);
+    }
   };
 
   // Switch difficulty level (Only allowed when not locked in active gameplay)
@@ -805,11 +921,15 @@ function App() {
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, [gameStarted, isTimeUp, isRoundComplete, showQuitModal, loading, letters, isWrong]);
 
-  // Timer color severity
-  const maxDuration = getActiveDuration(mode);
-  const timerPercentage = maxDuration ? Math.max(0, (timeLeft / maxDuration) * 100) : 100;
-  const isWarning = maxDuration && timeLeft <= Math.ceil(maxDuration * 0.45) && timeLeft > 4;
-  const isCritical = maxDuration && timeLeft <= 4;
+  // Timer color severity and display
+  const maxDuration = isEndlessTimed
+    ? endlessInitialDuration || getEndlessInitialDuration() || 60
+    : getActiveDuration(mode);
+  const timerPercentage = maxDuration ? Math.min(100, Math.max(0, (timeLeft / maxDuration) * 100)) : 100;
+  const isWarning = isEndlessTimed
+    ? timeLeft <= 15 && timeLeft > 5
+    : maxDuration && timeLeft <= Math.ceil(maxDuration * 0.45) && timeLeft > 4;
+  const isCritical = maxDuration && timeLeft <= (isEndlessTimed ? 5 : 4);
 
   const timerStatusClass = showQuitModal
     ? 'paused'
@@ -818,6 +938,17 @@ function App() {
       : isWarning
         ? 'warning'
         : '';
+
+  const formatTimeBadge = (seconds) => {
+    if (showQuitModal) return 'Paused';
+    if (seconds === null || seconds === undefined) return '';
+    if (seconds >= 60) {
+      const mins = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+    }
+    return `${seconds}s`;
+  };
 
   // Get active display difficulty for badge
   const displayDifficulty = currentWord?.difficulty || (difficulty === 'random' ? 'medium' : difficulty);
@@ -856,31 +987,57 @@ function App() {
             <div className="selector-group">
               <span className="selector-label">Endless Timer</span>
               <nav
-                className={`mode-selector ${isLocked ? 'locked' : ''}`}
+                className={`endless-timer-selector ${isLocked ? 'locked' : ''}`}
                 aria-label="Endless Timer Mode"
               >
                 <button
                   type="button"
-                  className={`mode-btn ${!endlessTimed ? 'active' : ''}`}
+                  className={`timer-option-btn ${endlessTimerOption === 'untimed' ? 'active' : ''}`}
                   disabled={isLocked}
-                  onClick={() => {
-                    setEndlessTimed(false);
-                    setTimeLeft(null);
-                  }}
+                  onClick={() => handleEndlessTimerOptionChange('untimed')}
                 >
                   Untimed
                 </button>
                 <button
                   type="button"
-                  className={`mode-btn ${endlessTimed ? 'active' : ''}`}
+                  className={`timer-option-btn ${endlessTimerOption === '60' ? 'active' : ''}`}
                   disabled={isLocked}
-                  onClick={() => {
-                    setEndlessTimed(true);
-                    setTimeLeft(20);
-                  }}
+                  onClick={() => handleEndlessTimerOptionChange('60')}
                 >
-                  Timed (20s)
+                  1 Min
                 </button>
+                <button
+                  type="button"
+                  className={`timer-option-btn ${endlessTimerOption === '120' ? 'active' : ''}`}
+                  disabled={isLocked}
+                  onClick={() => handleEndlessTimerOptionChange('120')}
+                >
+                  2 Mins
+                </button>
+                <button
+                  type="button"
+                  className={`timer-option-btn ${endlessTimerOption === 'custom' ? 'active' : ''}`}
+                  disabled={isLocked}
+                  onClick={() => handleEndlessTimerOptionChange('custom')}
+                >
+                  Custom
+                </button>
+                {endlessTimerOption === 'custom' && (
+                  <div className="custom-time-wrapper">
+                    <input
+                      type="number"
+                      min="10"
+                      max="600"
+                      step="5"
+                      className="custom-count-input"
+                      value={customEndlessTime}
+                      onChange={handleCustomEndlessTimeChange}
+                      disabled={isLocked}
+                      title="Enter custom timer in seconds"
+                    />
+                    <span className="custom-time-unit">sec</span>
+                  </div>
+                )}
               </nav>
             </div>
           )}
@@ -1009,7 +1166,13 @@ function App() {
 
       {!gameStarted && (
         <button id="start-btn" onClick={handleStartGame}>
-          Play ({mode === 'endless' ? 'Endless' : `${targetWordsCount} Words`} • {DIFFICULTY_CONFIG[difficulty]?.label})
+          Play ({
+            mode === 'endless'
+              ? isEndlessTimed
+                ? `Endless • ${endlessTimerOption === '60' ? '1 Min' : endlessTimerOption === '120' ? '2 Mins' : `${customEndlessTime}s`}`
+                : 'Endless • Untimed'
+              : `${targetWordsCount} Words`
+          } • {DIFFICULTY_CONFIG[difficulty]?.label})
         </button>
       )}
 
@@ -1021,7 +1184,7 @@ function App() {
               <div className="timer-header">
                 <span>Time Remaining</span>
                 <span className={`timer-badge ${timerStatusClass}`}>
-                  {showQuitModal ? 'Paused' : `${timeLeft}s`}
+                  {formatTimeBadge(timeLeft)}
                 </span>
               </div>
               <div className="timer-bar-track">
@@ -1038,6 +1201,9 @@ function App() {
             {successToast && (
               <div className="success-toast">
                 <span>Correct! +{successToast.points} pts</span>
+                {successToast.timeBonus && (
+                  <span className="time-bonus-toast">+{successToast.timeBonus}s</span>
+                )}
                 {mode !== 'casual' && successToast.streak > 1 && (
                   <span>(Streak x{successToast.streak})</span>
                 )}
@@ -1096,16 +1262,20 @@ function App() {
           {!loading && isTimeUp && !isRoundComplete && (
             <>
               <p className="outcome time-up">
-                {mode === 'hardcore' ? 'Game Over' : "Time's Up!"}
+                {mode === 'hardcore'
+                  ? 'Game Over'
+                  : isEndlessTimed
+                    ? 'Time Expired - Run Ended!'
+                    : "Time's Up!"}
               </p>
               {revealedAnswer && (
                 <p className="revealed-answer">
                   The correct word was: <strong>{revealedAnswer}</strong>
                 </p>
               )}
-              {mode === 'hardcore' && (
+              {(mode === 'hardcore' || isEndlessTimed) && (
                 <p className="hardcore-summary">
-                  Final Score: {score} • Best Run Streak: {currentStreak}
+                  Final Score: {score} • Words Solved: {roundSolvedCount} • Best Streak: {currentStreak}
                 </p>
               )}
               <div className="button-group">
@@ -1114,10 +1284,16 @@ function App() {
                   onClick={
                     mode === 'hardcore'
                       ? handleRestartHardcore
-                      : handleNextWordAfterTimeUp
+                      : isEndlessTimed
+                        ? handleRestartEndlessTimed
+                        : handleNextWordAfterTimeUp
                   }
                 >
-                  {mode === 'hardcore' ? 'Try Hardcore Again' : 'Try Next Word'}
+                  {mode === 'hardcore'
+                    ? 'Try Hardcore Again'
+                    : isEndlessTimed
+                      ? 'Play Endless Again'
+                      : 'Try Next Word'}
                 </button>
                 <button
                   type="button"
@@ -1136,7 +1312,9 @@ function App() {
               {/* Word Progress & Difficulty Tags */}
               <div>
                 <span className={`progress-badge ${isEndlessMode ? 'endless' : ''}`}>
-                  {isEndlessMode ? `Word ${currentWordNumber} (Endless)` : `Word ${currentWordNumber} of ${targetWordsCount}`}
+                  {isEndlessMode
+                    ? `Word ${currentWordNumber} (Endless${isEndlessTimed ? ' • Timed' : ''})`
+                    : `Word ${currentWordNumber} of ${targetWordsCount}`}
                 </span>
                 {' '}
                 <span
@@ -1315,7 +1493,9 @@ function App() {
                       ? hardcoreSkipsLeft > 0
                         ? `Skip (${hardcoreSkipsLeft} left)`
                         : 'No Skips Left'
-                      : 'Skip Word'}
+                      : isEndlessTimed
+                        ? 'Skip Word (-5s)'
+                        : 'Skip Word'}
                   </button>
                   <button
                     type="button"
@@ -1326,6 +1506,9 @@ function App() {
                   </button>
                 </div>
               </form>
+              {skipPenaltyNotice && (
+                <p className="time-penalty-notice">-5 seconds penalty for skip!</p>
+              )}
               {mode !== 'casual' && streakBrokenNotice && (
                 <p className="streak-notice">Streak reset to 0!</p>
               )}
