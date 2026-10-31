@@ -50,6 +50,13 @@ function App() {
   const [roundSolvedCount, setRoundSolvedCount] = useState(0);
   const [isRoundComplete, setIsRoundComplete] = useState(false);
 
+  // Tries and Accuracy Tracking
+  const [_currentWordTries, setCurrentWordTries] = useState(0);
+  const [totalTries, setTotalTries] = useState(0);
+  const [totalCorrectTries, setTotalCorrectTries] = useState(0);
+  const [wordTriesHistory, setWordTriesHistory] = useState([]);
+  const [showBreakdownModal, setShowBreakdownModal] = useState(false);
+
   // Hints State: category, definition, first-letter for current word
   const [hints, setHints] = useState({
     category: null,
@@ -134,6 +141,12 @@ function App() {
   const endTimeRef = useRef(null);
   const pausedRemainingMsRef = useRef(null);
   const toastTimeoutRef = useRef(null);
+  const currentWordRef = useRef(null);
+  const currentWordTriesRef = useRef(0);
+  const currentWordNumberRef = useRef(1);
+
+  // Overall accuracy based on total correct answers vs total submitted tries
+  const accuracyPercent = totalTries > 0 ? Math.round((totalCorrectTries / totalTries) * 100) : 0;
 
   // Effective round target word count
   const isEndlessMode = mode === 'endless';
@@ -202,6 +215,7 @@ function App() {
       });
     }
 
+    let revealed = null;
     try {
       const res = await fetch('/api/words/reveal', {
         method: 'POST',
@@ -210,11 +224,31 @@ function App() {
       });
       if (res.ok) {
         const data = await res.json();
+        revealed = data.answer;
         setRevealedAnswer(data.answer);
       }
     } catch (err) {
       console.error('Error revealing answer:', err);
     }
+
+    // Record timed-out word into tries history
+    const targetWord = currentWordRef.current;
+    const triesCount = currentWordTriesRef.current;
+    const wordNum = currentWordNumberRef.current;
+    setWordTriesHistory((prev) => [
+      ...prev,
+      {
+        wordNumber: wordNum,
+        wordId: targetWord?.id || wordId,
+        answer: revealed || targetWord?.answer || 'Unknown',
+        jumbled: targetWord?.jumbled,
+        difficulty: targetWord?.difficulty || 'medium',
+        tries: triesCount,
+        status: 'time_up'
+      }
+    ]);
+    setCurrentWordTries(0);
+    currentWordTriesRef.current = 0;
   }, [mode]);
 
   // Fetch a new jumbled word from Express backend by difficulty
@@ -263,6 +297,7 @@ function App() {
         if (!res.ok) throw new Error('Failed to load word');
         const data = await res.json();
         setCurrentWord(data);
+        currentWordRef.current = data;
       } catch (err) {
         console.error('Error fetching random word:', err);
       } finally {
@@ -395,15 +430,23 @@ function App() {
     setIsTimeUp(false);
     setRevealedAnswer(null);
     setCurrentWord(null);
+    currentWordRef.current = null;
     setUserInput('');
     setLetters([]);
     setHints({ category: null, definition: null, 'first-letter': null });
     setScore(0);
     setCurrentWordNumber(1);
+    currentWordNumberRef.current = 1;
     setRoundSolvedCount(0);
     setSuccessToast(null);
     setStreakBrokenNotice(false);
     setSkipPenaltyNotice(false);
+    setWordTriesHistory([]);
+    setCurrentWordTries(0);
+    currentWordTriesRef.current = 0;
+    setTotalTries(0);
+    setTotalCorrectTries(0);
+    setShowBreakdownModal(false);
     if (timerRef.current) {
       clearInterval(timerRef.current);
     }
@@ -427,6 +470,7 @@ function App() {
       setStreaks((prev) => ({ ...prev, [mode]: 0 }));
     }
     setCurrentWordNumber(1);
+    currentWordNumberRef.current = 1;
     setRoundSolvedCount(0);
     setIsRoundComplete(false);
     setIsTimeUp(false);
@@ -435,6 +479,12 @@ function App() {
     setStreakBrokenNotice(false);
     setSkipPenaltyNotice(false);
     setSuccessToast(null);
+    setWordTriesHistory([]);
+    setCurrentWordTries(0);
+    currentWordTriesRef.current = 0;
+    setTotalTries(0);
+    setTotalCorrectTries(0);
+    setShowBreakdownModal(false);
     await fetchNewWord(mode, difficulty, true);
   };
 
@@ -454,6 +504,7 @@ function App() {
       setStreaks((prev) => ({ ...prev, [mode]: 0 }));
     }
     setCurrentWordNumber(1);
+    currentWordNumberRef.current = 1;
     setRoundSolvedCount(0);
     setIsRoundComplete(false);
     setIsTimeUp(false);
@@ -461,6 +512,12 @@ function App() {
     setStreakBrokenNotice(false);
     setSkipPenaltyNotice(false);
     setSuccessToast(null);
+    setWordTriesHistory([]);
+    setCurrentWordTries(0);
+    currentWordTriesRef.current = 0;
+    setTotalTries(0);
+    setTotalCorrectTries(0);
+    setShowBreakdownModal(false);
     await fetchNewWord(mode, difficulty, true);
   };
 
@@ -579,6 +636,25 @@ function App() {
         setIsInputFlashing(true);
         setTimeout(() => setIsInputFlashing(false), 300);
 
+        // Record tries for this word (including this correct try)
+        const triesForThisWord = currentWordTriesRef.current + 1;
+        setWordTriesHistory((prev) => [
+          ...prev,
+          {
+            wordNumber: currentWordNumber,
+            wordId: currentWord.id,
+            answer: currentWord.answer || answerAttempt,
+            jumbled: currentWord.jumbled,
+            difficulty: currentWord.difficulty || (difficulty === 'random' ? 'medium' : difficulty),
+            tries: triesForThisWord,
+            status: 'solved'
+          }
+        ]);
+        setTotalTries((prev) => prev + 1);
+        setTotalCorrectTries((prev) => prev + 1);
+        setCurrentWordTries(0);
+        currentWordTriesRef.current = 0;
+
         // In endless timed mode, gain 5 seconds!
         if (isEndlessTimed && endTimeRef.current) {
           endTimeRef.current += 5000;
@@ -661,7 +737,11 @@ function App() {
         }
 
         // Advance to next word
-        setCurrentWordNumber((prev) => prev + 1);
+        setCurrentWordNumber((prev) => {
+          const next = prev + 1;
+          currentWordNumberRef.current = next;
+          return next;
+        });
         fetchNewWord(mode, difficulty, false);
       } else {
         // Red shaking of text boxes on wrong answer
@@ -669,6 +749,12 @@ function App() {
         setTimeout(() => {
           setIsWrong(false);
         }, 550);
+        setCurrentWordTries((prev) => {
+          const next = prev + 1;
+          currentWordTriesRef.current = next;
+          return next;
+        });
+        setTotalTries((prev) => prev + 1);
         focusActiveBox();
       }
     } catch (err) {
@@ -702,6 +788,23 @@ function App() {
       setTimeout(() => setSkipPenaltyNotice(false), 2500);
     }
 
+    // Record skipped word
+    const triesCount = currentWordTriesRef.current;
+    setWordTriesHistory((prev) => [
+      ...prev,
+      {
+        wordNumber: currentWordNumber,
+        wordId: currentWord?.id,
+        answer: currentWord?.answer || 'Skipped',
+        jumbled: currentWord?.jumbled,
+        difficulty: currentWord?.difficulty || (difficulty === 'random' ? 'medium' : difficulty),
+        tries: triesCount,
+        status: 'skipped'
+      }
+    ]);
+    setCurrentWordTries(0);
+    currentWordTriesRef.current = 0;
+
     if (mode !== 'casual') {
       const activeStreak = streaks[mode] || 0;
       if (!isTimeUp && activeStreak > 0) {
@@ -723,7 +826,11 @@ function App() {
       return;
     }
 
-    setCurrentWordNumber((prev) => prev + 1);
+    setCurrentWordNumber((prev) => {
+      const next = prev + 1;
+      currentWordNumberRef.current = next;
+      return next;
+    });
     fetchNewWord(mode, difficulty, false);
   };
 
@@ -744,7 +851,7 @@ function App() {
   };
 
   // Cancel quit: resumes the clock exactly where it paused
-  const handleCancelQuit = () => {
+  const handleCancelQuit = useCallback(() => {
     setShowQuitModal(false);
 
     const activeDuration = getActiveDuration(mode);
@@ -752,7 +859,7 @@ function App() {
       endTimeRef.current = Date.now() + pausedRemainingMsRef.current;
       pausedRemainingMsRef.current = null;
     }
-  };
+  }, [getActiveDuration, mode]);
 
   // Confirmed quit: exits mode and unlocks selector
   const handleConfirmQuit = () => {
@@ -841,16 +948,20 @@ function App() {
     }
   };
 
-  // Handle escape key to resume from modal
+  // Handle escape key to resume from modal or close breakdown modal
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.key === 'Escape' && showQuitModal) {
-        handleCancelQuit();
+      if (e.key === 'Escape') {
+        if (showBreakdownModal) {
+          setShowBreakdownModal(false);
+        } else if (showQuitModal) {
+          handleCancelQuit();
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showQuitModal]);
+  }, [showQuitModal, showBreakdownModal, handleCancelQuit]);
 
   // Keep focus on active box when clicking anywhere on website (excluding controls/modals)
   useEffect(() => {
@@ -1256,14 +1367,25 @@ function App() {
                       : `${roundSolvedCount} / ${targetWordsCount}`}
                   </div>
                 </div>
-                <div className="round-stat-item">
-                  <div className="round-stat-item-label">Accuracy</div>
-                  <div className="round-stat-item-value">
-                    {Math.round(
-                      (roundSolvedCount /
-                        Math.max(1, isRoundComplete ? targetWordsCount : currentWordNumber)) *
-                        100
-                    )}%
+                <div
+                  className="round-stat-item clickable"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setShowBreakdownModal(true)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setShowBreakdownModal(true);
+                    }
+                  }}
+                  title="Click to view word-by-word tries breakdown"
+                >
+                  <div className="round-stat-item-label">
+                    Accuracy <span className="stat-clickable-hint">📊 View Breakdown</span>
+                  </div>
+                  <div className="round-stat-item-value">{accuracyPercent}%</div>
+                  <div className="round-stat-item-sub">
+                    {totalCorrectTries} / {totalTries} {totalTries === 1 ? 'try' : 'tries'}
                   </div>
                 </div>
                 <div className="round-stat-item">
@@ -1277,6 +1399,13 @@ function App() {
                   </div>
                 )}
               </div>
+              <button
+                type="button"
+                className="breakdown-trigger-btn"
+                onClick={() => setShowBreakdownModal(true)}
+              >
+                📊 View Tries Breakdown per Word
+              </button>
               <div className="button-group">
                 <button id="again-btn" onClick={handleRestartRound}>
                   Play Again
@@ -1529,6 +1658,109 @@ function App() {
                 onClick={handleConfirmQuit}
               >
                 Quit Mode
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Word Tries Breakdown Modal Popout */}
+      {showBreakdownModal && (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="breakdown-modal-title"
+          onClick={() => setShowBreakdownModal(false)}
+        >
+          <div
+            className="modal-box breakdown-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="breakdown-modal-header">
+              <div>
+                <h2 id="breakdown-modal-title" className="modal-title">Word Tries Breakdown</h2>
+                <p className="breakdown-subtitle">See how many tries each word took to solve</p>
+              </div>
+              <button
+                type="button"
+                className="modal-close-icon"
+                onClick={() => setShowBreakdownModal(false)}
+                aria-label="Close breakdown"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="breakdown-list">
+              {wordTriesHistory.length === 0 ? (
+                <p className="breakdown-empty">No word attempts recorded this round.</p>
+              ) : (
+                wordTriesHistory.map((item, index) => (
+                  <div
+                    key={`${item.wordId || index}-${index}`}
+                    className={`breakdown-card status-${item.status}`}
+                  >
+                    <div className="breakdown-card-left">
+                      <span className="breakdown-word-index">#{item.wordNumber || index + 1}</span>
+                      <span className="breakdown-word-answer">{item.answer?.toUpperCase()}</span>
+                      {item.difficulty && (
+                        <span className={`breakdown-diff-tag ${item.difficulty}`}>
+                          {item.difficulty}
+                        </span>
+                      )}
+                    </div>
+                    <div className="breakdown-card-right">
+                      <span className="breakdown-tries-badge">
+                        {item.tries} {item.tries === 1 ? 'try' : 'tries'}
+                        {item.status === 'solved' && item.tries === 1 && (
+                          <span className="first-try-star" title="Solved on first try!"> ⭐</span>
+                        )}
+                      </span>
+                      <span className={`breakdown-status-badge ${item.status}`}>
+                        {item.status === 'solved'
+                          ? '✓ Solved'
+                          : item.status === 'skipped'
+                            ? '⤼ Skipped'
+                            : '⏱ Time Up'}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="breakdown-summary-footer">
+              <div className="breakdown-summary-stat">
+                <span className="breakdown-summary-label">Words</span>
+                <span className="breakdown-summary-val">{wordTriesHistory.length}</span>
+              </div>
+              <div className="breakdown-summary-stat">
+                <span className="breakdown-summary-label">Total Tries</span>
+                <span className="breakdown-summary-val">{totalTries}</span>
+              </div>
+              <div className="breakdown-summary-stat">
+                <span className="breakdown-summary-label">Avg Tries / Word</span>
+                <span className="breakdown-summary-val">
+                  {wordTriesHistory.length > 0
+                    ? (totalTries / wordTriesHistory.length).toFixed(1)
+                    : '0'}
+                </span>
+              </div>
+              <div className="breakdown-summary-stat">
+                <span className="breakdown-summary-label">Accuracy</span>
+                <span className="breakdown-summary-val highlight">{accuracyPercent}%</span>
+              </div>
+            </div>
+
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="modal-resume-btn"
+                onClick={() => setShowBreakdownModal(false)}
+                autoFocus
+              >
+                Close Breakdown
               </button>
             </div>
           </div>

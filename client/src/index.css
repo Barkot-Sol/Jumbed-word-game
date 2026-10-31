@@ -424,6 +424,60 @@ h1 {
   color: #222;
 }
 
+.round-stat-item.clickable {
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  position: relative;
+}
+
+.round-stat-item.clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(3, 99, 3, 0.15);
+  border-color: #4caf50;
+  background: #f1f8e9;
+}
+
+.round-stat-item-sub {
+  font-size: 11px;
+  color: #777;
+  margin-top: 3px;
+  font-weight: 500;
+}
+
+.stat-clickable-hint {
+  display: block;
+  font-size: 10px;
+  color: #2e7d32;
+  font-weight: 600;
+  text-transform: none;
+  margin-top: 2px;
+}
+
+.breakdown-trigger-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 320px;
+  margin: 0 auto 20px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1b5e20;
+  background: #e8f5e9;
+  border: 1px solid #a5d6a7;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.breakdown-trigger-btn:hover {
+  background: #c8e6c9;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(46, 125, 50, 0.15);
+}
+
 /* Scoreboard & Streak Bar */
 .scoreboard {
   display: flex;
@@ -1014,6 +1068,232 @@ button.danger-btn:hover {
   }
 }
 
+/* Word Tries Breakdown Modal */
+.modal-box.breakdown-modal {
+  max-width: 520px;
+  padding: 24px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+}
+
+.breakdown-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 14px;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 12px;
+}
+
+.breakdown-modal-header .modal-title {
+  margin-bottom: 4px;
+  text-align: left;
+}
+
+.breakdown-subtitle {
+  font-size: 13px;
+  color: #666;
+  margin: 0;
+}
+
+.modal-close-icon {
+  background: none;
+  border: none;
+  font-size: 20px;
+  color: #888;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  line-height: 1;
+  transition: all 0.15s ease;
+}
+
+.modal-close-icon:hover {
+  background: #f0f0f0;
+  color: #222;
+}
+
+.breakdown-list {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 4px;
+  margin-bottom: 16px;
+}
+
+.breakdown-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.breakdown-list::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 3px;
+}
+
+.breakdown-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #fcfcfc;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  padding: 10px 14px;
+  transition: background 0.15s ease;
+}
+
+.breakdown-card:hover {
+  background: #f7f9f7;
+}
+
+.breakdown-card.status-solved {
+  border-left: 4px solid #2e7d32;
+}
+
+.breakdown-card.status-skipped {
+  border-left: 4px solid #f57c00;
+  background: #fffdf9;
+}
+
+.breakdown-card.status-time_up {
+  border-left: 4px solid #c62828;
+  background: #fffafa;
+}
+
+.breakdown-card-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.breakdown-word-index {
+  font-size: 12px;
+  font-weight: 700;
+  color: #888;
+  min-width: 24px;
+}
+
+.breakdown-word-answer {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #222;
+}
+
+.breakdown-diff-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+.breakdown-diff-tag.easy {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.breakdown-diff-tag.medium {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+.breakdown-diff-tag.hard {
+  background: #fbe9e7;
+  color: #d84315;
+}
+
+.breakdown-card-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.breakdown-tries-badge {
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+  display: inline-flex;
+  align-items: center;
+}
+
+.first-try-star {
+  margin-left: 4px;
+  font-size: 14px;
+}
+
+.breakdown-status-badge {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 12px;
+  letter-spacing: 0.4px;
+}
+
+.breakdown-status-badge.solved {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.breakdown-status-badge.skipped {
+  background: #fff3e0;
+  color: #ef6c00;
+}
+
+.breakdown-status-badge.time_up {
+  background: #ffebee;
+  color: #c62828;
+}
+
+.breakdown-summary-footer {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  background: #f8faf8;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 10px 8px;
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.breakdown-summary-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.breakdown-summary-label {
+  font-size: 11px;
+  color: #666;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.breakdown-summary-val {
+  font-size: 16px;
+  font-weight: 700;
+  color: #222;
+}
+
+.breakdown-summary-val.highlight {
+  color: #2e7d32;
+}
+
+.breakdown-empty {
+  text-align: center;
+  color: #777;
+  font-size: 14px;
+  padding: 24px 0;
+}
+
 /* Hardcore Mode HUD & Badges */
 .hardcore-hud {
   display: flex;
@@ -1112,5 +1392,22 @@ button.danger-btn:hover {
   .hint-btn {
     font-size: 12px;
     padding: 6px 10px;
+  }
+  .modal-box.breakdown-modal {
+    padding: 18px 14px;
+    max-height: 90vh;
+  }
+  .breakdown-summary-footer {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  .breakdown-card {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .breakdown-card-right {
+    width: 100%;
+    justify-content: space-between;
   }
 }
