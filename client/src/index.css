@@ -381,6 +381,21 @@ h1 {
   margin-bottom: 12px;
 }
 
+.round-complete-title.time-up {
+  color: #c62828;
+}
+
+.round-complete-card.time-up {
+  border-color: #ffcdd2;
+  box-shadow: 0 8px 24px rgba(198, 40, 40, 0.1);
+}
+
+.round-complete-desc {
+  font-size: 15px;
+  color: #555;
+  margin-bottom: 14px;
+}
+
 .round-stats-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
