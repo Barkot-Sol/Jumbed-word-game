@@ -1,386 +1,669 @@
-// Word dataset with difficulty levels, categories, and definitions
-export const WORDS = [
-  // --- EASY (5 - 6 letters) ---
+/**
+ * Dictionary API Word Provider
+ * Fetches dynamic words, authentic definitions, and grammatical categories
+ * via the Free Dictionary API and Datamuse API, with a robust seed fallback.
+ */
+
+// Categorized semantic topics for diverse vocabulary and meaningful category hints
+const TOPICS = [
+  { topic: 'nature', label: 'Nature & Environment' },
+  { topic: 'science', label: 'Science & Discovery' },
+  { topic: 'animals', label: 'Animals & Wildlife' },
+  { topic: 'food', label: 'Food & Cuisine' },
+  { topic: 'art', label: 'Art & Culture' },
+  { topic: 'travel', label: 'Travel & Geography' },
+  { topic: 'home', label: 'Objects & Daily Life' },
+  { topic: 'sports', label: 'Sports & Games' },
+  { topic: 'space', label: 'Space & Astronomy' },
+  { topic: 'music', label: 'Music & Sound' },
+  { topic: 'literature', label: 'Language & Thought' }
+];
+
+// Difficulty letter patterns
+const DIFFICULTY_CONFIG = {
+  easy: {
+    minLen: 4,
+    maxLen: 6,
+    patterns: ['?????', '??????']
+  },
+  medium: {
+    minLen: 7,
+    maxLen: 8,
+    patterns: ['???????', '????????']
+  },
+  hard: {
+    minLen: 9,
+    maxLen: 12,
+    patterns: ['?????????', '??????????', '???????????']
+  }
+};
+
+/**
+ * Fisher-Yates shuffle algorithm to generate a valid anagram.
+ * Guarantees that the jumbled word does not match the original answer.
+ */
+export function jumbleWord(word) {
+  const letters = word.toLowerCase().split('');
+  if (letters.length <= 1) return word;
+
+  let shuffled;
+  let attempts = 0;
+  do {
+    shuffled = [...letters];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    attempts++;
+  } while (shuffled.join('') === word.toLowerCase() && attempts < 25);
+
+  // If still matching after attempts (e.g. repeated letters), force swap differing letters
+  if (shuffled.join('') === word.toLowerCase() && shuffled.length >= 2) {
+    for (let i = 0; i < shuffled.length - 1; i++) {
+      if (shuffled[i] !== shuffled[i + 1]) {
+        [shuffled[i], shuffled[i + 1]] = [shuffled[i + 1], shuffled[i]];
+        break;
+      }
+    }
+  }
+
+  return shuffled.join('');
+}
+
+/**
+ * Parse and clean raw definition from Datamuse 'defs' entry
+ */
+function parseDatamuseDef(rawDef) {
+  if (!rawDef) return { definition: '', partOfSpeech: 'General' };
+
+  const parts = rawDef.split('\t');
+  let posCode = '';
+  let defText = rawDef;
+  if (parts.length > 1) {
+    posCode = parts[0].trim().toLowerCase();
+    defText = parts.slice(1).join('\t').trim();
+  }
+
+  const posMap = {
+    n: 'Noun',
+    v: 'Verb',
+    adj: 'Adjective',
+    adv: 'Adverb',
+    prop: 'Proper Noun'
+  };
+  const partOfSpeech = posMap[posCode] || 'General';
+
+  // Strip technical usage tags like (transitive), (intransitive), etc.
+  defText = defText.replace(/^(\([a-z\s,;-]+\)\s*)+/i, '').trim();
+
+  if (defText.length > 0) {
+    defText = defText.charAt(0).toUpperCase() + defText.slice(1);
+    if (!defText.endsWith('.') && !defText.endsWith('!') && !defText.endsWith('?')) {
+      defText += '.';
+    }
+  }
+
+  return { definition: defText, partOfSpeech };
+}
+
+/**
+ * Fetch rich definition from the Free Dictionary API (dictionaryapi.dev)
+ */
+async function fetchFromFreeDictionary(word) {
+  try {
+    const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`, {
+      headers: { 'User-Agent': 'JumbleWordGame/2.0' },
+      signal: AbortSignal.timeout(2500)
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const firstEntry = data[0];
+      const meaning = firstEntry?.meanings?.[0];
+      const def = meaning?.definitions?.[0]?.definition;
+      const pos = meaning?.partOfSpeech;
+
+      if (def) {
+        let cleanDef = def.trim();
+        if (cleanDef.length > 0) {
+          cleanDef = cleanDef.charAt(0).toUpperCase() + cleanDef.slice(1);
+          if (!cleanDef.endsWith('.') && !cleanDef.endsWith('!') && !cleanDef.endsWith('?')) {
+            cleanDef += '.';
+          }
+        }
+        return {
+          definition: cleanDef,
+          partOfSpeech: pos ? pos.charAt(0).toUpperCase() + pos.slice(1) : 'General'
+        };
+      }
+    }
+  } catch {
+    // Ignore timeout or network errors to fall back gracefully
+  }
+  return null;
+}
+
+/**
+ * Fetch words from the Datamuse Dictionary API with definitions and parts of speech
+ */
+async function fetchWordsFromDictionaryApi(difficulty, count = 15) {
+  const config = DIFFICULTY_CONFIG[difficulty] || DIFFICULTY_CONFIG.easy;
+  const pattern = config.patterns[Math.floor(Math.random() * config.patterns.length)];
+  const topicObj = TOPICS[Math.floor(Math.random() * TOPICS.length)];
+
+  const url = `https://api.datamuse.com/words?topics=${topicObj.topic}&sp=${pattern}&md=dp&max=${count * 3}`;
+
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(3500) });
+    if (!res.ok) return [];
+
+    const rawWords = await res.json();
+    const validCandidates = rawWords.filter((w) => {
+      const word = w.word;
+      return (
+        /^[a-z]+$/i.test(word) &&
+        word.length >= config.minLen &&
+        word.length <= config.maxLen &&
+        w.defs &&
+        w.defs.length > 0 &&
+        (w.score || 0) > 1000
+      );
+    });
+
+    const results = [];
+    for (const item of validCandidates) {
+      if (results.length >= count) break;
+      const word = item.word.toLowerCase();
+      if (usedWordsSet.has(word)) continue;
+
+      const parsedDef = parseDatamuseDef(item.defs[0]);
+      if (!parsedDef.definition) continue;
+
+      results.push({
+        answer: word,
+        difficulty,
+        category: `${parsedDef.partOfSpeech} • ${topicObj.label}`,
+        definition: parsedDef.definition,
+        partOfSpeech: parsedDef.partOfSpeech,
+        source: 'dictionary_api'
+      });
+    }
+
+    return results;
+  } catch (err) {
+    console.error('Dictionary API fetch error:', err.message);
+    return [];
+  }
+}
+
+// Comprehensive seed dictionary bank with authentic definitions
+// Used for immediate startup and 100% offline fallback resilience
+const SEED_WORDS = [
+  // --- EASY (4 - 6 letters) ---
   {
-    id: 1,
-    jumbled: "soehu",
-    answer: "house",
-    difficulty: "easy",
-    category: "Architecture & Living",
-    definition: "A building designed for human habitation"
+    answer: 'house',
+    difficulty: 'easy',
+    category: 'Noun • Objects & Daily Life',
+    definition: 'A building designed for human habitation and family living.'
   },
   {
-    id: 2,
-    jumbled: "rphees",
-    answer: "sphere",
-    difficulty: "easy",
-    category: "Geometry & Shapes",
-    definition: "A round three-dimensional shape with every point equidistant from its center"
+    answer: 'sphere',
+    difficulty: 'easy',
+    category: 'Noun • Science & Discovery',
+    definition: 'A round three-dimensional shape where every point is equidistant from its center.'
   },
   {
-    id: 3,
-    jumbled: "nrbkeo",
-    answer: "broken",
-    difficulty: "easy",
-    category: "States & Conditions",
-    definition: "Fractured, damaged, or separated into parts and not functioning"
+    answer: 'broken',
+    difficulty: 'easy',
+    category: 'Adjective • Objects & Daily Life',
+    definition: 'Fractured, damaged, or separated into parts and not functioning.'
   },
   {
-    id: 4,
-    jumbled: "nesreu",
-    answer: "ensure",
-    difficulty: "easy",
-    category: "Actions & Assurances",
-    definition: "To make certain that something will happen, be safe, or be the case"
+    answer: 'ensure',
+    difficulty: 'easy',
+    category: 'Verb • Language & Thought',
+    definition: 'To make certain that something will happen, be safe, or be true.'
   },
   {
-    id: 5,
-    jumbled: "tehrnc",
-    answer: "trench",
-    difficulty: "easy",
-    category: "Geography & Excavation",
-    definition: "A long, narrow deep ditch cut into the earth"
+    answer: 'trench',
+    difficulty: 'easy',
+    category: 'Noun • Travel & Geography',
+    definition: 'A long, narrow, deep ditch cut into the earth.'
   },
   {
-    id: 6,
-    jumbled: "ocinsu",
-    answer: "cousin",
-    difficulty: "easy",
-    category: "Family & Relations",
-    definition: "The son or daughter of your aunt or uncle"
+    answer: 'cousin',
+    difficulty: 'easy',
+    category: 'Noun • Objects & Daily Life',
+    definition: 'A child of one’s aunt or uncle.'
   },
   {
-    id: 7,
-    jumbled: "iqntau",
-    answer: "quaint",
-    difficulty: "easy",
-    category: "Style & Appearance",
-    definition: "Charmingly old-fashioned, picturesque, or delightfully unusual"
+    answer: 'quaint',
+    difficulty: 'easy',
+    category: 'Adjective • Art & Culture',
+    definition: 'Charmingly old-fashioned, picturesque, or delightfully unusual.'
   },
   {
-    id: 8,
-    jumbled: "elppa",
-    answer: "apple",
-    difficulty: "easy",
-    category: "Food & Nature",
-    definition: "A round fruit with red, green, or yellow skin and a firm, juicy interior"
+    answer: 'apple',
+    difficulty: 'easy',
+    category: 'Noun • Food & Cuisine',
+    definition: 'A round fruit with red, green, or yellow skin and a firm, juicy interior.'
   },
   {
-    id: 9,
-    jumbled: "gitre",
-    answer: "tiger",
-    difficulty: "easy",
-    category: "Animals & Wildlife",
-    definition: "A large solitary carnivorous mammal with distinctive orange and black stripes"
+    answer: 'tiger',
+    difficulty: 'easy',
+    category: 'Noun • Animals & Wildlife',
+    definition: 'A large solitary carnivorous mammal with distinctive orange and black stripes.'
   },
   {
-    id: 10,
-    jumbled: "ltpaen",
-    answer: "planet",
-    difficulty: "easy",
-    category: "Space & Astronomy",
-    definition: "A large celestial body in space orbiting around a star"
+    answer: 'planet',
+    difficulty: 'easy',
+    category: 'Noun • Space & Astronomy',
+    definition: 'A large celestial body in space orbiting around a star.'
   },
   {
-    id: 11,
-    jumbled: "dngrea",
-    answer: "garden",
-    difficulty: "easy",
-    category: "Nature & Home",
-    definition: "A piece of ground used for growing flowers, fruit, or vegetables"
+    answer: 'garden',
+    difficulty: 'easy',
+    category: 'Noun • Nature & Environment',
+    definition: 'A plot of ground where herbs, fruits, flowers, or vegetables are cultivated.'
   },
   {
-    id: 12,
-    jumbled: "lcsate",
-    answer: "castle",
-    difficulty: "easy",
-    category: "History & Buildings",
-    definition: "A large fortified building or residence typical of the medieval era"
+    answer: 'castle',
+    difficulty: 'easy',
+    category: 'Noun • Travel & Geography',
+    definition: 'A large fortified building or set of buildings typical of the medieval era.'
   },
   {
-    id: 13,
-    jumbled: "rsveli",
-    answer: "silver",
-    difficulty: "easy",
-    category: "Metals & Colors",
-    definition: "A precious, shiny grayish-white metallic element"
+    answer: 'silver',
+    difficulty: 'easy',
+    category: 'Noun • Science & Discovery',
+    definition: 'A precious, shiny grayish-white metallic element of high value.'
   },
   {
-    id: 14,
-    jumbled: "idberg",
-    answer: "bridge",
-    difficulty: "easy",
-    category: "Structures & Travel",
-    definition: "A structure built to span a physical obstacle like a river or road"
+    answer: 'bridge',
+    difficulty: 'easy',
+    category: 'Noun • Travel & Geography',
+    definition: 'A structure built to span a physical obstacle like a river or road.'
+  },
+  {
+    answer: 'solace',
+    difficulty: 'easy',
+    category: 'Noun • Language & Thought',
+    definition: 'Comfort or consolation in a time of loneliness, sorrow, or distress.'
+  },
+  {
+    answer: 'ardent',
+    difficulty: 'easy',
+    category: 'Adjective • Language & Thought',
+    definition: 'Full of warmth, passion, spirit, or eager enthusiasm.'
+  },
+  {
+    answer: 'placid',
+    difficulty: 'easy',
+    category: 'Adjective • Nature & Environment',
+    definition: 'Calm and quiet; peaceful, serene, and tranquil.'
+  },
+  {
+    answer: 'breeze',
+    difficulty: 'easy',
+    category: 'Noun • Nature & Environment',
+    definition: 'A light, gentle, and refreshing wind.'
+  },
+  {
+    answer: 'guitar',
+    difficulty: 'easy',
+    category: 'Noun • Music & Sound',
+    definition: 'A stringed musical instrument played with the fingers or a pick.'
+  },
+  {
+    answer: 'beacon',
+    difficulty: 'easy',
+    category: 'Noun • Travel & Geography',
+    definition: 'A guiding signal, warning light, or prominent landmark.'
   },
 
   // --- MEDIUM (7 - 8 letters) ---
   {
-    id: 15,
-    jumbled: "epiertl",
-    answer: "reptile",
-    difficulty: "medium",
-    category: "Animals & Biology",
-    definition: "A cold-blooded vertebrate animal with scales or horny plates"
+    answer: 'reptile',
+    difficulty: 'medium',
+    category: 'Noun • Animals & Wildlife',
+    definition: 'A cold-blooded vertebrate animal with scales or horny plates.'
   },
   {
-    id: 16,
-    jumbled: "foprerm",
-    answer: "perform",
-    difficulty: "medium",
-    category: "Arts & Entertainment",
-    definition: "To carry out an action, display a talent, or stage a presentation"
+    answer: 'perform',
+    difficulty: 'medium',
+    category: 'Verb • Art & Culture',
+    definition: 'To carry out an action, display a talent, or stage a presentation.'
   },
   {
-    id: 17,
-    jumbled: "uaqrtre",
-    answer: "quarter",
-    difficulty: "medium",
-    category: "Measurements & Numbers",
-    definition: "One of four equal parts into which something is or can be divided"
+    answer: 'quarter',
+    difficulty: 'medium',
+    category: 'Noun • Science & Discovery',
+    definition: 'One of four equal parts into which something is divided.'
   },
   {
-    id: 18,
-    jumbled: "erogast",
-    answer: "storage",
-    difficulty: "medium",
-    category: "Spaces & Organization",
-    definition: "The action, space, or method of keeping goods for future use"
+    answer: 'storage',
+    difficulty: 'medium',
+    category: 'Noun • Objects & Daily Life',
+    definition: 'The action, space, or method of keeping goods for future use.'
   },
   {
-    id: 19,
-    jumbled: "nlskteoe",
-    answer: "skeleton",
-    difficulty: "medium",
-    category: "Anatomy & Biology",
-    definition: "The internal structural framework of bones supporting an animal body"
+    answer: 'journey',
+    difficulty: 'medium',
+    category: 'Noun • Travel & Geography',
+    definition: 'An act of traveling from one destination to another.'
   },
   {
-    id: 20,
-    jumbled: "reetporr",
-    answer: "reporter",
-    difficulty: "medium",
-    category: "Professions & Media",
-    definition: "A person who investigates and reports news stories for journalism"
+    answer: 'fortune',
+    difficulty: 'medium',
+    category: 'Noun • Language & Thought',
+    definition: 'Chance or luck as an external arbitrary force affecting human affairs.'
   },
   {
-    id: 21,
-    jumbled: "arselee",
-    answer: "release",
-    difficulty: "medium",
-    category: "Actions & Freedom",
-    definition: "To set free from confinement, restraint, or obligation"
+    answer: 'balance',
+    difficulty: 'medium',
+    category: 'Noun • Science & Discovery',
+    definition: 'An even distribution of weight enabling someone or something to remain upright.'
   },
   {
-    id: 22,
-    jumbled: "htrates",
-    answer: "threats",
-    difficulty: "medium",
-    category: "Safety & Conflict",
-    definition: "Statements or indications of an intention to inflict harm, injury, or damage"
+    answer: 'harmony',
+    difficulty: 'medium',
+    category: 'Noun • Music & Sound',
+    definition: 'The combination of simultaneously sounded musical notes to produce pleasing chords.'
   },
   {
-    id: 23,
-    jumbled: "deispes",
-    answer: "despise",
-    difficulty: "medium",
-    category: "Emotions & Attitudes",
-    definition: "To feel deep contempt, disgust, or scorn for someone or something"
+    answer: 'climate',
+    difficulty: 'medium',
+    category: 'Noun • Nature & Environment',
+    definition: 'The prevailing weather conditions in an area over a long period.'
   },
   {
-    id: 24,
-    jumbled: "eprecsne",
-    answer: "presence",
-    difficulty: "medium",
-    category: "State of Being",
-    definition: "The state of being in a particular place, or an impressive aura"
+    answer: 'diamond',
+    difficulty: 'medium',
+    category: 'Noun • Science & Discovery',
+    definition: 'A precious, highly refractive gemstone of pure crystallized carbon.'
   },
   {
-    id: 25,
-    jumbled: "ndmaido",
-    answer: "diamond",
-    difficulty: "medium",
-    category: "Gems & Minerals",
-    definition: "A precious clear gemstone renowned for exceptional hardness and brilliance"
+    answer: 'glacier',
+    difficulty: 'medium',
+    category: 'Noun • Nature & Environment',
+    definition: 'A slowly moving mass or river of ice formed by the accumulation of snow.'
   },
   {
-    id: 26,
-    jumbled: "nyjeuro",
-    answer: "journey",
-    difficulty: "medium",
-    category: "Travel & Adventure",
-    definition: "An act of traveling from one destination to another"
+    answer: 'curious',
+    difficulty: 'medium',
+    category: 'Adjective • Language & Thought',
+    definition: 'Eager to know or learn something; inquisitive.'
   },
   {
-    id: 27,
-    jumbled: "tymesyr",
-    answer: "mystery",
-    difficulty: "medium",
-    category: "Puzzles & Enigmas",
-    definition: "Something difficult or impossible to understand or explain"
+    answer: 'silence',
+    difficulty: 'medium',
+    category: 'Noun • Music & Sound',
+    definition: 'Complete absence of sound or noise; quietness.'
   },
   {
-    id: 28,
-    jumbled: "cbnlaae",
-    answer: "balance",
-    difficulty: "medium",
-    category: "Physics & Harmony",
-    definition: "An even distribution of weight or force enabling stability"
+    answer: 'horizon',
+    difficulty: 'medium',
+    category: 'Noun • Nature & Environment',
+    definition: 'The line at which the earth’s surface and the sky appear to meet.'
   },
   {
-    id: 29,
-    jumbled: "myonahr",
-    answer: "harmony",
-    difficulty: "medium",
-    category: "Music & Peace",
-    definition: "Agreement or pleasing concord of parts, sounds, or elements"
+    answer: 'compass',
+    difficulty: 'medium',
+    category: 'Noun • Travel & Geography',
+    definition: 'An instrument containing a magnetized pointer that shows the direction of magnetic north.'
+  },
+  {
+    answer: 'prudent',
+    difficulty: 'medium',
+    category: 'Adjective • Language & Thought',
+    definition: 'Acting with or showing care, wisdom, and thought for the future.'
+  },
+  {
+    answer: 'radiant',
+    difficulty: 'medium',
+    category: 'Adjective • Science & Discovery',
+    definition: 'Sending out light; shining or glowing brightly.'
+  },
+  {
+    answer: 'wildlife',
+    difficulty: 'medium',
+    category: 'Noun • Animals & Wildlife',
+    definition: 'Wild animals and vegetation living in a natural, undomesticated state.'
   },
 
-  // --- HARD (9+ letters / Complex) ---
+  // --- HARD (9 - 12 letters) ---
   {
-    id: 30,
-    jumbled: "ocnialtoi",
-    answer: "coalition",
-    difficulty: "hard",
-    category: "Politics & Society",
-    definition: "A temporary alliance of distinct parties or factions for combined action"
+    answer: 'philosophy',
+    difficulty: 'hard',
+    category: 'Noun • Language & Thought',
+    definition: 'The study of the fundamental nature of knowledge, reality, and existence.'
   },
   {
-    id: 31,
-    jumbled: "iavreelt",
-    answer: "relative",
-    difficulty: "hard",
-    category: "Family & People",
-    definition: "A person connected to another by blood or marriage"
+    answer: 'catastrophe',
+    difficulty: 'hard',
+    category: 'Noun • Language & Thought',
+    definition: 'An event causing great and often sudden damage or suffering; a disaster.'
   },
   {
-    id: 32,
-    jumbled: "txmneeipo",
-    answer: "exemption",
-    difficulty: "hard",
-    category: "Law & Regulations",
-    definition: "The state of being freed from an obligation, rule, or liability"
+    answer: 'equilibrium',
+    difficulty: 'hard',
+    category: 'Noun • Science & Discovery',
+    definition: 'A state in which opposing forces or influences are balanced.'
   },
   {
-    id: 33,
-    jumbled: "miailunum",
-    answer: "aluminum",
-    altAnswers: ["aluminium"],
-    difficulty: "hard",
-    category: "Chemistry & Metals",
-    definition: "A lightweight, silvery-white metallic element used in cans and airplanes"
+    answer: 'magnificent',
+    difficulty: 'hard',
+    category: 'Adjective • Art & Culture',
+    definition: 'Impressively beautiful, elaborate, or strikingly extravagant.'
   },
   {
-    id: 34,
-    jumbled: "ntnatiriso",
-    answer: "transition",
-    difficulty: "hard",
-    category: "Change & Movement",
-    definition: "The process or period of changing from one state, stage, or place to another"
+    answer: 'astronomy',
+    difficulty: 'hard',
+    category: 'Noun • Space & Astronomy',
+    definition: 'The branch of science which deals with celestial objects, space, and the universe.'
   },
   {
-    id: 35,
-    jumbled: "sitecrde",
-    answer: "discreet",
-    difficulty: "hard",
-    category: "Personal Traits & Behavior",
-    definition: "Careful and prudent in speech and action, especially to maintain confidentiality"
+    answer: 'fascinating',
+    difficulty: 'hard',
+    category: 'Adjective • Language & Thought',
+    definition: 'Extremely interesting, charming, and captivating.'
   },
   {
-    id: 36,
-    jumbled: "evisiced",
-    answer: "decisive",
-    difficulty: "hard",
-    category: "Decisions & Leadership",
-    definition: "Settling an issue firmly; having the ability to make rapid, clear decisions"
+    answer: 'mysterious',
+    difficulty: 'hard',
+    category: 'Adjective • Art & Culture',
+    definition: 'Difficult or impossible to understand, explain, or identify.'
   },
   {
-    id: 37,
-    jumbled: "eurndinem",
-    answer: "undermine",
-    difficulty: "hard",
-    category: "Strategy & Actions",
-    definition: "To weaken or erode the base or foundation of something gradually"
+    answer: 'wilderness',
+    difficulty: 'hard',
+    category: 'Noun • Nature & Environment',
+    definition: 'An uncultivated, uninhabited, and inhospitable region.'
   },
   {
-    id: 38,
-    jumbled: "onmelhaec",
-    answer: "chameleon",
-    difficulty: "hard",
-    category: "Animals & Biology",
-    definition: "A lizard capable of changing its skin color to match its surroundings"
+    answer: 'celebration',
+    difficulty: 'hard',
+    category: 'Noun • Objects & Daily Life',
+    definition: 'The action of marking one’s pleasure at an important event or occasion.'
   },
   {
-    id: 39,
-    jumbled: "nthbaylri",
-    answer: "labyrinth",
-    difficulty: "hard",
-    category: "Mythology & Mazes",
-    definition: "A complicated, irregular network of passages or paths in which it is difficult to find one's way"
+    answer: 'constellation',
+    difficulty: 'hard',
+    category: 'Noun • Space & Astronomy',
+    definition: 'A group of stars forming a recognizable pattern that is traditionally named.'
   },
   {
-    id: 40,
-    jumbled: "yholhosipp",
-    answer: "philosophy",
-    difficulty: "hard",
-    category: "Thought & Knowledge",
-    definition: "The fundamental study of the nature of knowledge, reality, and human existence"
+    answer: 'architecture',
+    difficulty: 'hard',
+    category: 'Noun • Art & Culture',
+    definition: 'The art or practice of designing and constructing buildings.'
   },
   {
-    id: 41,
-    jumbled: "pctsoatahre",
-    answer: "catastrophe",
-    difficulty: "hard",
-    category: "Events & Crises",
-    definition: "An event causing great and often sudden damage or suffering"
+    answer: 'kaleidoscope',
+    difficulty: 'hard',
+    category: 'Noun • Art & Culture',
+    definition: 'A constantly changing pattern or sequence of elements.'
   },
   {
-    id: 42,
-    jumbled: "bqeimiuliru",
-    answer: "equilibrium",
-    difficulty: "hard",
-    category: "Science & Physics",
-    definition: "A state in which opposing forces or influences are balanced"
+    answer: 'metamorphosis',
+    difficulty: 'hard',
+    category: 'Noun • Science & Discovery',
+    definition: 'A change of the form or nature of a thing or person into a completely different one.'
   },
   {
-    id: 43,
-    jumbled: "fcenmagiint",
-    answer: "magnificent",
-    difficulty: "hard",
-    category: "Grandeur & Beauty",
-    definition: "Impressively beautiful, elaborate, or strikingly extravagant"
+    answer: 'renaissance',
+    difficulty: 'hard',
+    category: 'Noun • Art & Culture',
+    definition: 'A revival of or renewed interest in something, especially culture and learning.'
+  },
+  {
+    answer: 'phenomenon',
+    difficulty: 'hard',
+    category: 'Noun • Science & Discovery',
+    definition: 'A fact or situation that is observed to exist or happen, especially one whose cause is in question.'
   }
 ];
 
-export function getRandomWord(difficulty = null) {
-  let pool = WORDS;
-  if (difficulty && ['easy', 'medium', 'hard'].includes(difficulty.toLowerCase())) {
-    const filtered = WORDS.filter((w) => w.difficulty === difficulty.toLowerCase());
-    if (filtered.length > 0) {
-      pool = filtered;
+// Active in-memory state
+let nextWordId = 1;
+const activeWordsMap = new Map();
+const usedWordsSet = new Set();
+const isReplenishing = { easy: false, medium: false, hard: false };
+
+// Word pools organized by difficulty
+const wordPools = {
+  easy: [],
+  medium: [],
+  hard: []
+};
+
+// Initialize seed words into pools
+function initializePools() {
+  for (const item of SEED_WORDS) {
+    usedWordsSet.add(item.answer.toLowerCase());
+    wordPools[item.difficulty].push({
+      ...item,
+      source: 'seed_dictionary'
+    });
+  }
+}
+initializePools();
+
+/**
+ * Replenish pool for a given difficulty from the Dictionary API in the background
+ */
+async function replenishPool(difficulty) {
+  if (isReplenishing[difficulty]) return;
+  isReplenishing[difficulty] = true;
+
+  try {
+    const fetchedWords = await fetchWordsFromDictionaryApi(difficulty, 15);
+    for (const w of fetchedWords) {
+      if (!usedWordsSet.has(w.answer)) {
+        usedWordsSet.add(w.answer);
+        wordPools[difficulty].push(w);
+      }
     }
+  } catch (err) {
+    console.error(`Error replenishing ${difficulty} pool:`, err.message);
+  } finally {
+    isReplenishing[difficulty] = false;
+  }
+}
+
+// Kick off initial background pool expansion on startup
+(async () => {
+  await Promise.allSettled([
+    replenishPool('easy'),
+    replenishPool('medium'),
+    replenishPool('hard')
+  ]);
+})();
+
+/**
+ * Get a random jumbled word from the Dictionary API pool
+ */
+export async function getRandomWord(difficulty = null) {
+  let targetDiff = (difficulty || '').toLowerCase();
+  if (targetDiff === 'random' || !['easy', 'medium', 'hard'].includes(targetDiff)) {
+    const diffs = ['easy', 'medium', 'hard'];
+    targetDiff = diffs[Math.floor(Math.random() * diffs.length)];
   }
 
+  let pool = wordPools[targetDiff];
+
+  // If pool is getting low, replenish asynchronously
+  if (pool.length < 8) {
+    replenishPool(targetDiff);
+  }
+
+  // If pool is empty, fall back to seed words for that difficulty
+  if (!pool || pool.length === 0) {
+    const fallbacks = SEED_WORDS.filter((w) => w.difficulty === targetDiff);
+    pool = fallbacks.length > 0 ? fallbacks : SEED_WORDS;
+  }
+
+  // Pick a random word from the pool
   const randomIndex = Math.floor(Math.random() * pool.length);
-  const word = pool[randomIndex];
+  const selected = pool[randomIndex];
+
+  // Remove from active pool to avoid quick repeats
+  if (pool.length > 5) {
+    pool.splice(randomIndex, 1);
+  }
+
+  // Generate dynamic jumbled anagram
+  const jumbled = jumbleWord(selected.answer);
+
+  // Assign a unique ID for this gameplay round
+  const currentId = nextWordId++;
+
+  const wordEntry = {
+    id: currentId,
+    answer: selected.answer.toLowerCase(),
+    jumbled,
+    difficulty: selected.difficulty,
+    category: selected.category,
+    definition: selected.definition,
+    partOfSpeech: selected.partOfSpeech
+  };
+
+  activeWordsMap.set(currentId, wordEntry);
+
+  // Asynchronously enrich definition with Free Dictionary API if available
+  fetchFromFreeDictionary(wordEntry.answer).then((rich) => {
+    if (rich && activeWordsMap.has(currentId)) {
+      const existing = activeWordsMap.get(currentId);
+      existing.definition = rich.definition || existing.definition;
+      if (rich.partOfSpeech) {
+        existing.partOfSpeech = rich.partOfSpeech;
+        const topicPart = existing.category?.split('•')?.[1]?.trim() || 'General';
+        existing.category = `${rich.partOfSpeech} • ${topicPart}`;
+      }
+    }
+  });
+
   return {
-    id: word.id,
-    jumbled: word.jumbled,
-    difficulty: word.difficulty,
-    answer: word.answer
+    id: wordEntry.id,
+    jumbled: wordEntry.jumbled,
+    difficulty: wordEntry.difficulty,
+    answer: wordEntry.answer
   };
 }
 
+/**
+ * Check a user's submitted answer
+ */
 export function checkAnswer(id, submittedAnswer) {
-  const word = WORDS.find((w) => w.id === parseInt(id, 10));
+  const numericId = parseInt(id, 10);
+  const word = activeWordsMap.get(numericId);
+
   if (!word) {
     return { found: false, correct: false };
   }
 
-  const cleanInput = submittedAnswer.trim().toLowerCase();
-  const matchesAnswer = cleanInput === word.answer.toLowerCase();
-  const matchesAlt = Boolean(word.altAnswers && word.altAnswers.some((alt) => alt.toLowerCase() === cleanInput));
-  const isCorrect = matchesAnswer || matchesAlt;
+  const cleanInput = (submittedAnswer || '').trim().toLowerCase();
+  const isCorrect = cleanInput === word.answer.toLowerCase();
 
   return {
     found: true,
@@ -389,23 +672,45 @@ export function checkAnswer(id, submittedAnswer) {
   };
 }
 
+/**
+ * Reveal the answer for a word by ID
+ */
 export function getWordAnswer(id) {
-  const word = WORDS.find((w) => w.id === parseInt(id, 10));
+  const numericId = parseInt(id, 10);
+  const word = activeWordsMap.get(numericId);
   return word ? word.answer : null;
 }
 
-export function getWordHint(id, hintType) {
-  const word = WORDS.find((w) => w.id === parseInt(id, 10));
+/**
+ * Get hint (category, definition, first-letter) for a word
+ */
+export async function getWordHint(id, hintType) {
+  const numericId = parseInt(id, 10);
+  const word = activeWordsMap.get(numericId);
   if (!word) return null;
 
   switch (hintType) {
     case 'category':
-      return { type: 'category', hint: word.category };
+      return {
+        type: 'category',
+        hint: word.category || `${word.partOfSpeech || 'General'} Vocabulary`
+      };
     case 'definition':
-      return { type: 'definition', hint: word.definition };
+      return {
+        type: 'definition',
+        hint: word.definition || 'A common English vocabulary word.'
+      };
     case 'first-letter':
-      return { type: 'first-letter', hint: word.answer.charAt(0).toUpperCase() };
+      return {
+        type: 'first-letter',
+        hint: word.answer.charAt(0).toUpperCase()
+      };
     default:
       return null;
   }
 }
+
+/**
+ * Export WORDS array for backwards compatibility and stats endpoint
+ */
+export const WORDS = SEED_WORDS;

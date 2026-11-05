@@ -19,10 +19,15 @@ app.get('/api/health', (req, res) => {
 });
 
 // API: Get a random jumbled word (with optional difficulty: easy | medium | hard)
-app.get('/api/words/random', (req, res) => {
-  const { difficulty } = req.query;
-  const word = getRandomWord(difficulty);
-  res.json(word);
+app.get('/api/words/random', async (req, res) => {
+  try {
+    const { difficulty } = req.query;
+    const word = await getRandomWord(difficulty);
+    res.json(word);
+  } catch (err) {
+    console.error('Error getting random word:', err);
+    res.status(500).json({ error: 'Failed to retrieve word' });
+  }
 });
 
 // API: Check submitted answer
@@ -60,18 +65,23 @@ app.post('/api/words/reveal', (req, res) => {
 });
 
 // API: Get hint for a word (category, definition, or first-letter)
-app.post('/api/words/hint', (req, res) => {
+app.post('/api/words/hint', async (req, res) => {
   const { id, type } = req.body;
   if (id === undefined || !type) {
     return res.status(400).json({ error: 'Missing word id or hint type' });
   }
 
-  const hintResult = getWordHint(id, type);
-  if (!hintResult) {
-    return res.status(404).json({ error: 'Hint not found for word' });
-  }
+  try {
+    const hintResult = await getWordHint(id, type);
+    if (!hintResult) {
+      return res.status(404).json({ error: 'Hint not found for word' });
+    }
 
-  res.json(hintResult);
+    res.json(hintResult);
+  } catch (err) {
+    console.error('Error getting hint:', err);
+    res.status(500).json({ error: 'Failed to retrieve hint' });
+  }
 });
 
 // API: Get total words count / list overview (for future expansions)
