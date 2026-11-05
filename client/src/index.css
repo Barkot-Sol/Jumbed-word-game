@@ -98,6 +98,11 @@ h1 {
   box-shadow: 0 2px 8px rgba(183, 28, 28, 0.45);
 }
 
+.mode-btn.custom_timed.active {
+  background: linear-gradient(135deg, #0277bd, #00838f);
+  box-shadow: 0 2px 8px rgba(2, 119, 189, 0.4);
+}
+
 .mode-btn:disabled:not(.active) {
   opacity: 0.4;
   cursor: not-allowed;
@@ -157,6 +162,28 @@ h1 {
   background: linear-gradient(135deg, #7b1fa2, #303f9f);
   color: white;
   box-shadow: 0 2px 6px rgba(123, 31, 162, 0.4);
+}
+
+.difficulty-btn.hardcore-btn {
+  border: 1px dashed #d32f2f;
+  color: #b71c1c;
+  font-weight: 700;
+  transition: all 0.2s ease;
+  margin-left: 4px;
+}
+
+.difficulty-btn.hardcore-btn:not(:disabled):hover {
+  background: #ffebee;
+  color: #b71c1c;
+  border-style: solid;
+}
+
+.difficulty-btn.hardcore-btn.active {
+  background: linear-gradient(135deg, #b71c1c, #880e4f);
+  color: white;
+  border-style: solid;
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(183, 28, 28, 0.45);
 }
 
 .difficulty-btn:disabled:not(.active) {
@@ -241,6 +268,29 @@ h1 {
 
 .endless-timer-selector.locked {
   background: #e8eceb;
+}
+
+/* Custom Timed Mode Selector */
+.custom-timed-selector {
+  display: inline-flex;
+  background: #e1f5fe;
+  padding: 4px;
+  border-radius: 30px;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.08);
+  gap: 4px;
+  align-items: center;
+  transition: opacity 0.2s ease;
+  flex-wrap: wrap;
+}
+
+.custom-timed-selector.locked {
+  background: #e8eceb;
+}
+
+.custom-timed-selector .timer-option-btn.active {
+  background: #0277bd;
+  color: white;
+  box-shadow: 0 2px 6px rgba(2, 119, 189, 0.35);
 }
 
 .timer-option-btn {

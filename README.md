@@ -7,7 +7,7 @@ A modern, full-featured web game where players unscramble jumbled anagrams. Buil
 ## 🌟 Key Features
 
 ### 📖 Dynamic Dictionary API Engine
-- **Infinite Vocabulary:** Replaced static word lists with real-time queries to the **Datamuse API** and **Free Dictionary API** (`dictionaryapi.dev`).
+- **Infinite Vocabulary:** Dynamic real-time queries to the **Datamuse API** and **Free Dictionary API** (`dictionaryapi.dev`).
 - **Authentic Definitions & Categories:** Real dictionary definitions and grammatical categories (e.g. `Noun • Science & Discovery`, `Adjective • Art & Culture`) are generated dynamically for hints.
 - **Smart Difficulty Calibration:**
   - **Easy:** 4–6 letters (common everyday words).
@@ -23,15 +23,51 @@ A modern, full-featured web game where players unscramble jumbled anagrams. Buil
 
 | Mode | Rules & Mechanics |
 | :--- | :--- |
-| **Casual** | Relaxed and untimed. Wordle-style letter-position feedback (correct letters turn green in place). Streaks disabled. |
-| **Speed** | 15-second countdown timer per word. Speed bonus awarded for solving with $\ge 50\%$ time remaining. |
-| **Blitz** | 8-second rapid-fire countdown timer per word. Fast-paced streak builder. |
+| **Casual** | Relaxed, untimed gameplay with no streak tracking. Wordle-style letter-position feedback (correct letters turn green in place on all difficulties). |
+| **Speed** | 15-second countdown timer per word. Speed bonus awarded for solving with $\ge 50\%$ time remaining. Easy & Medium difficulties feature green letter assistance. |
+| **Blitz** | Rapid-fire 8-second countdown timer per word. Fast-paced streak builder. Easy & Medium difficulties feature green letter assistance. |
+| **Custom Timed** | Fully customizable per-word countdown timer (presets: **15s**, **30s**, **45s**, **60s**, or **Custom 5–300s**). Includes all standard timed features (speed bonuses, streaks, word count goals, and green boxes on Easy/Medium). |
 | **Endless** | Play continuously without word limits. Choose between **Untimed**, **1 Minute**, **2 Minutes**, or **Custom Time**. Each correct word adds $+5\text{s}$; each skip subtracts $-5\text{s}$. |
-| **Hardcore** | Strict resource management: only 3 skips and 1 of each hint type (Category, Definition, 1st Letter) for the entire run. $+5$ extra points per solve. |
+
+---
+
+### ⚡ Hardcore Difficulty Setting
+
+Hardcore is a high-stakes challenge modifier available for **all modes except Casual** (Speed, Blitz, Custom Timed, and Endless):
+
+- **Toggle Control:** Accessible directly in the Difficulty bar for non-casual modes (`⚡ Hardcore ON/OFF`).
+- **Strict Skip Quota:** Limited to only **3 skips** for the entire run.
+- **Run-Scoped Hint Inventory:** Hints do **not** refresh each word. Instead, players are given a strict inventory for the entire run:
+  - **Category Hint:** 1 use per run.
+  - **Definition Hint:** 1 use per run.
+  - **1st Letter Hint:** 1 use per run.
+  - **Random Letter Hint:** 1 use per run on Easy/Medium difficulty, 2 uses per run on Hard difficulty.
+- **No Letter-Position Assistance:** Green check mark feedback is disabled across all difficulties when Hardcore is active.
+- **Score Multiplier:** Earn $+5$ bonus points for every successfully solved word in Hardcore mode.
+
+---
+
+### 🟩 Green Check Mark (Letter Assistance)
+
+- **Casual Mode:** Enabled on all difficulties (Easy, Medium, Hard).
+- **Speed, Blitz & Custom Timed Modes:** Enabled on **Easy** and **Medium** difficulties; disabled on **Hard** difficulty.
+- **Hardcore Setting:** Disabled on all difficulties to preserve the pure jumble challenge.
+
+---
+
+### 💡 Hints System
+
+1. **Category Hint:** Displays the part of speech and topic context (e.g., `Noun • Animals & Wildlife`).
+2. **Definition Hint:** Displays an authentic dictionary definition.
+3. **1st Letter Hint:** Reveals the starting letter of the target word.
+4. **✨ Random Letter Hint:** Automatically answers and locks a randomly selected unrevealed/incorrect letter directly into its box.
+   - **Standard Rules:** 1 use per word on Easy and Medium; 2 uses per word on Hard (refreshes on each new word).
+   - **Hardcore Rules:** 1 use per run on Easy and Medium; 2 uses per run on Hard (from the run inventory).
 
 ---
 
 ### 📊 Performance & Tries Tracking
+
 - **Attempt Tracking:** Records every submitted attempt on each word.
 - **Round Accuracy:** Calculates solve accuracy based on $\frac{\text{Correct Solves}}{\text{Total Tries}} \times 100\%$.
 - **Word Tries Breakdown Modal:** An interactive pop-out modal accessible from the round summary showing:
@@ -43,12 +79,10 @@ A modern, full-featured web game where players unscramble jumbled anagrams. Buil
 
 ---
 
-### 💡 Hints System & Controls
-- **Category Hint:** Displays part of speech and semantic topic (e.g., `Noun • Animals & Wildlife`).
-- **Definition Hint:** Displays authentic dictionary definition.
-- **1st Letter Hint:** Reveals the starting letter of the target word.
-- **Quit / Pause Modal:** Safely pauses active countdown clocks when confirming to quit a run.
-- **Keyboard & Touch Accessibility:** Wordle-style letter boxes with arrow-key navigation, automatic advancing, paste support, and global typing listeners.
+### ⌨️ Controls & Accessibility
+- **Pause & Quit Modal:** Safely pauses active countdown clocks when confirming to quit a run, resuming smoothly if canceled.
+- **Wordle-style Navigation:** Automatic focus progression, backspace letter deletion, arrow keys, paste support, and global typing listener.
+- **Custom Words Goal:** Adjustable target word count (3 to 100 words) for non-endless modes.
 
 ---
 

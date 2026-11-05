@@ -3,13 +3,13 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 const MODE_CONFIG = {
   speed: { label: 'Speed (20s)', duration: 20 },
   blitz: { label: 'Blitz (10s)', duration: 10 },
+  custom_timed: { label: 'Custom Timed', duration: 30, isCustomTimed: true },
   casual: { label: 'Casual', duration: null },
-  endless: { label: 'Endless', duration: null, isEndless: true },
-  hardcore: { label: 'Hardcore (15s)', duration: 15, isHardcore: true }
+  endless: { label: 'Endless', duration: null, isEndless: true }
 };
 
 const DIFFICULTY_CONFIG = {
-  easy: { label: 'Easy', desc: '5-6 letters', basePoints: 10, badgeClass: 'easy' },
+  easy: { label: 'Easy', desc: '4-6 letters', basePoints: 10, badgeClass: 'easy' },
   medium: { label: 'Medium', desc: '7-8 letters', basePoints: 12, badgeClass: 'medium' },
   hard: { label: 'Hard', desc: '9+ letters', basePoints: 15, badgeClass: 'hard' },
   random: { label: 'Random', desc: 'Mixed', basePoints: 12, badgeClass: 'random' }
@@ -33,8 +33,15 @@ function App() {
   // Difficulty: 'easy' | 'medium' | 'hard' | 'random'
   const [difficulty, setDifficulty] = useState('random');
 
-  // Game Mode: 'speed' | 'blitz' | 'casual' | 'endless' | 'hardcore'
+  // Hardcore difficulty setting (Strict inventory rules, available for all modes except casual)
+  const [isHardcore, setIsHardcore] = useState(false);
+
+  // Game Mode: 'speed' | 'blitz' | 'custom_timed' | 'casual' | 'endless'
   const [mode, setMode] = useState('speed');
+
+  // Custom Timed Mode Settings ('15' | '30' | '45' | '60' | 'custom')
+  const [customTimedOption, setCustomTimedOption] = useState('30');
+  const [customTimedSeconds, setCustomTimedSeconds] = useState(30);
 
   // Endless Mode Timer Settings ('untimed' | '60' | '120' | 'custom')
   const [endlessTimerOption, setEndlessTimerOption] = useState('60');
@@ -65,12 +72,16 @@ function App() {
   });
   const [loadingHint, setLoadingHint] = useState(null);
 
-  // Hardcore Mode Session Limits: 3 skips total & 1 of each hint total
+  // Random Letter Hint: tracked per word for standard play
+  const [wordRandomLettersUsed, setWordRandomLettersUsed] = useState(0);
+
+  // Hardcore Session Limits: 3 skips total & limited hints for the entire run
   const [hardcoreSkipsLeft, setHardcoreSkipsLeft] = useState(3);
   const [hardcoreHintsLeft, setHardcoreHintsLeft] = useState({
     category: 1,
     definition: 1,
-    'first-letter': 1
+    'first-letter': 1,
+    'random-letter': 1
   });
 
   // Countdown Timer
@@ -83,8 +94,8 @@ function App() {
   const [streaks, setStreaks] = useState({
     speed: 0,
     blitz: 0,
-    endless: 0,
-    hardcore: 0
+    custom_timed: 0,
+    endless: 0
   });
   const [bestStreaks, setBestStreaks] = useState(() => {
     const saved = localStorage.getItem('jumble_best_streaks_v2');
@@ -99,8 +110,8 @@ function App() {
     return {
       speed: legacyBest,
       blitz: 0,
-      endless: 0,
-      hardcore: 0
+      custom_timed: 0,
+      endless: 0
     };
   });
   const [highScores, setHighScores] = useState(() => {
@@ -116,9 +127,9 @@ function App() {
     return {
       speed: legacyHigh,
       blitz: 0,
+      custom_timed: 0,
       casual: 0,
-      endless: 0,
-      hardcore: 0
+      endless: 0
     };
   });
 
@@ -157,6 +168,14 @@ function App() {
       ? Math.max(3, parseInt(customWordCount, 10) || 3)
       : parseInt(wordCountOption, 10) || 10;
 
+  // Custom Timed per-word duration
+  const getCustomTimedDuration = useCallback(() => {
+    if (customTimedOption === 'custom') {
+      return Math.max(5, Math.min(300, parseInt(customTimedSeconds, 10) || 30));
+    }
+    return parseInt(customTimedOption, 10) || 30;
+  }, [customTimedOption, customTimedSeconds]);
+
   // Initial duration for endless timed mode
   const getEndlessInitialDuration = useCallback(() => {
     if (endlessTimerOption === '60') return 60;
@@ -173,15 +192,33 @@ function App() {
       if (targetMode === 'endless') {
         return endlessTimerOption !== 'untimed' ? getEndlessInitialDuration() : null;
       }
+      if (targetMode === 'custom_timed') {
+        return getCustomTimedDuration();
+      }
       return MODE_CONFIG[targetMode]?.duration || null;
     },
-    [mode, endlessTimerOption, getEndlessInitialDuration]
+    [mode, endlessTimerOption, getEndlessInitialDuration, getCustomTimedDuration]
   );
+
+  // Active difficulty for word and hints calculation
+  const activeWordDiff = currentWord?.difficulty || (difficulty === 'random' ? 'medium' : difficulty);
+  const isEasyOrMed = activeWordDiff === 'easy' || activeWordDiff === 'medium';
+
+  // Green check mark allowed in casual mode for all difficulties, or in easy/medium for non-hardcore timed modes
+  const allowGreenCheck = mode === 'casual' || (!isHardcore && isEasyOrMed);
+
+  // Maximum random letter hints allowed (1 for easy/medium, 2 for hard)
+  const maxRandomLettersForWord = activeWordDiff === 'hard' ? 2 : 1;
+  const maxHcRandomLetterHints = (difficulty === 'hard') ? 2 : 1;
+
+  // Remaining random letter hints for current word or run
+  const randomLetterHintsLeft = isHardcore
+    ? (hardcoreHintsLeft['random-letter'] !== undefined ? hardcoreHintsLeft['random-letter'] : maxHcRandomLetterHints)
+    : Math.max(0, maxRandomLettersForWord - wordRandomLettersUsed);
 
   // User is locked in settings while a game is actively running
   const isLocked = gameStarted && !isTimeUp && !isRoundComplete;
 
-  // Fetch word reveal when time runs out (Loss in timed mode)
   // Helper to focus the current active/empty letter box
   const focusActiveBox = useCallback(() => {
     if (!gameStarted || isTimeUp || isRoundComplete || showQuitModal) return;
@@ -261,6 +298,7 @@ function App() {
       setUserInput('');
       setLetters([]);
       setHints({ category: null, definition: null, 'first-letter': null });
+      setWordRandomLettersUsed(0);
       setLoadingHint(null);
 
       // Initialize countdown timer with precision timestamp
@@ -279,7 +317,7 @@ function App() {
           setTimeLeft(null);
         }
       } else {
-        const duration = MODE_CONFIG[activeMode]?.duration || null;
+        const duration = getActiveDuration(activeMode);
         if (duration) {
           endTimeRef.current = Date.now() + duration * 1000;
           pausedRemainingMsRef.current = null;
@@ -308,7 +346,7 @@ function App() {
         setLoading(false);
       }
     },
-    [mode, difficulty, endlessTimerOption, getEndlessInitialDuration]
+    [mode, difficulty, endlessTimerOption, getEndlessInitialDuration, getActiveDuration]
   );
 
   // Synchronize letters array whenever current word updates
@@ -330,8 +368,8 @@ function App() {
   const handleGetHint = async (type) => {
     if (!currentWord || hints[type] || loadingHint || showQuitModal) return;
 
-    // In hardcore mode, check remaining hint inventory
-    if (mode === 'hardcore' && hardcoreHintsLeft[type] <= 0) {
+    // In hardcore difficulty, check remaining hint inventory
+    if (isHardcore && (hardcoreHintsLeft[type] || 0) <= 0) {
       return;
     }
 
@@ -353,10 +391,10 @@ function App() {
         }));
 
         // Deduct 1 hint from Hardcore inventory
-        if (mode === 'hardcore') {
+        if (isHardcore) {
           setHardcoreHintsLeft((prev) => ({
             ...prev,
-            [type]: Math.max(0, prev[type] - 1)
+            [type]: Math.max(0, (prev[type] || 1) - 1)
           }));
         }
       }
@@ -366,6 +404,75 @@ function App() {
       setLoadingHint(null);
       focusActiveBox();
     }
+  };
+
+  // Handle Random Letter Hint: answers a random letter into the correct box
+  const handleRandomLetterHint = () => {
+    if (
+      !currentWord ||
+      !currentWord.answer ||
+      loading ||
+      isTimeUp ||
+      isRoundComplete ||
+      showQuitModal
+    ) {
+      return;
+    }
+
+    if (randomLetterHintsLeft <= 0) {
+      return;
+    }
+
+    // Collect indices where letter is not yet correctly filled
+    const availableIndices = [];
+    for (let i = 0; i < currentWord.answer.length; i++) {
+      if (letters[i]?.toUpperCase() !== currentWord.answer[i]?.toUpperCase()) {
+        availableIndices.push(i);
+      }
+    }
+
+    if (availableIndices.length === 0) {
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      setSuccessToast({
+        points: 0,
+        message: 'All letters are already correctly answered!'
+      });
+      toastTimeoutRef.current = setTimeout(() => setSuccessToast(null), 2000);
+      return;
+    }
+
+    // Randomly choose one unrevealed index
+    const chosenIdx = availableIndices[Math.floor(Math.random() * availableIndices.length)];
+    const correctChar = currentWord.answer[chosenIdx].toUpperCase();
+
+    const newLetters = [...letters];
+    newLetters[chosenIdx] = correctChar;
+    setLetters(newLetters);
+    setUserInput(newLetters.join(''));
+
+    setWordRandomLettersUsed((prev) => prev + 1);
+
+    if (isHardcore) {
+      setHardcoreHintsLeft((prev) => ({
+        ...prev,
+        'random-letter': Math.max(0, (prev['random-letter'] || 1) - 1)
+      }));
+    }
+
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setSuccessToast({
+      points: 0,
+      message: `Letter #${chosenIdx + 1} revealed: "${correctChar}"`
+    });
+    toastTimeoutRef.current = setTimeout(() => setSuccessToast(null), 2000);
+
+    setTimeout(() => {
+      const nextEmpty = newLetters.findIndex((l) => !l);
+      if (nextEmpty !== -1 && boxRefs.current[nextEmpty]) {
+        boxRefs.current[nextEmpty].focus();
+        boxRefs.current[nextEmpty].select();
+      }
+    }, 50);
   };
 
   // Precision countdown timer interval
@@ -434,6 +541,7 @@ function App() {
     setUserInput('');
     setLetters([]);
     setHints({ category: null, definition: null, 'first-letter': null });
+    setWordRandomLettersUsed(0);
     setScore(0);
     setCurrentWordNumber(1);
     currentWordNumberRef.current = 1;
@@ -456,12 +564,14 @@ function App() {
 
   // Start the game on clicking "Play"
   const handleStartGame = async () => {
-    if (mode === 'hardcore') {
+    if (isHardcore) {
       setHardcoreSkipsLeft(3);
+      const maxHcRandom = (difficulty === 'hard') ? 2 : 1;
       setHardcoreHintsLeft({
         category: 1,
         definition: 1,
-        'first-letter': 1
+        'first-letter': 1,
+        'random-letter': maxHcRandom
       });
     }
 
@@ -485,17 +595,20 @@ function App() {
     setTotalTries(0);
     setTotalCorrectTries(0);
     setShowBreakdownModal(false);
+    setWordRandomLettersUsed(0);
     await fetchNewWord(mode, difficulty, true);
   };
 
   // Restart round for current mode (from round complete or time up)
   const handleRestartRound = async () => {
-    if (mode === 'hardcore') {
+    if (isHardcore) {
       setHardcoreSkipsLeft(3);
+      const maxHcRandom = (difficulty === 'hard') ? 2 : 1;
       setHardcoreHintsLeft({
         category: 1,
         definition: 1,
-        'first-letter': 1
+        'first-letter': 1,
+        'random-letter': maxHcRandom
       });
     }
 
@@ -518,6 +631,7 @@ function App() {
     setTotalTries(0);
     setTotalCorrectTries(0);
     setShowBreakdownModal(false);
+    setWordRandomLettersUsed(0);
     await fetchNewWord(mode, difficulty, true);
   };
 
@@ -677,7 +791,7 @@ function App() {
           const streakBonus = (newStreak - 1) * 2;
           pointsEarned += streakBonus;
 
-          if (mode === 'hardcore') {
+          if (isHardcore) {
             pointsEarned += 5;
           }
 
@@ -766,7 +880,7 @@ function App() {
   const handleSkipWord = () => {
     if (showQuitModal) return;
 
-    if (mode === 'hardcore') {
+    if (isHardcore) {
       if (hardcoreSkipsLeft <= 0) return;
       setHardcoreSkipsLeft((prev) => prev - 1);
     }
@@ -876,11 +990,46 @@ function App() {
     if (isLocked || newMode === mode) return;
     resetToIdleState();
     setMode(newMode);
+    if (newMode === 'casual' && isHardcore) {
+      setIsHardcore(false);
+    }
     if (newMode === 'endless') {
       setTimeLeft(endlessTimerOption !== 'untimed' ? getEndlessInitialDuration() : null);
+    } else if (newMode === 'custom_timed') {
+      setTimeLeft(getCustomTimedDuration());
     } else {
       setTimeLeft(MODE_CONFIG[newMode]?.duration || null);
     }
+  };
+
+  // Switch custom timed mode duration option ('15' | '30' | '45' | '60' | 'custom')
+  const handleCustomTimedOptionChange = (option) => {
+    if (isLocked) return;
+    if (gameStarted) {
+      resetToIdleState();
+    }
+    setCustomTimedOption(option);
+    const sec = option === 'custom'
+      ? Math.max(5, Math.min(300, parseInt(customTimedSeconds, 10) || 30))
+      : parseInt(option, 10) || 30;
+    setTimeLeft(sec);
+  };
+
+  const handleCustomTimedSecondsChange = (e) => {
+    const val = Math.max(5, Math.min(300, parseInt(e.target.value, 10) || 5));
+    setCustomTimedSeconds(val);
+    if (customTimedOption === 'custom') {
+      setTimeLeft(val);
+    }
+  };
+
+  // Toggle Hardcore difficulty rules (available for all modes except casual)
+  const handleToggleHardcore = () => {
+    if (isLocked || mode === 'casual') return;
+    if (gameStarted) {
+      resetToIdleState();
+    }
+    setIsHardcore((prev) => !prev);
   };
 
   // Switch endless timer mode option ('untimed' | '60' | '120' | 'custom')
@@ -1154,6 +1303,53 @@ function App() {
             </div>
           )}
 
+          {/* Custom Timed Sub-toggle (Shown when Custom Timed Mode is selected) */}
+          {mode === 'custom_timed' && (
+            <div className="selector-group">
+              <span className="selector-label">Timer per Word</span>
+              <nav
+                className={`custom-timed-selector ${isLocked ? 'locked' : ''}`}
+                aria-label="Custom Timed Mode Duration"
+              >
+                {['15', '30', '45', '60'].map((sec) => (
+                  <button
+                    key={sec}
+                    type="button"
+                    className={`timer-option-btn ${customTimedOption === sec ? 'active' : ''}`}
+                    disabled={isLocked}
+                    onClick={() => handleCustomTimedOptionChange(sec)}
+                  >
+                    {sec}s
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className={`timer-option-btn ${customTimedOption === 'custom' ? 'active' : ''}`}
+                  disabled={isLocked}
+                  onClick={() => handleCustomTimedOptionChange('custom')}
+                >
+                  Custom
+                </button>
+                {customTimedOption === 'custom' && (
+                  <div className="custom-time-wrapper">
+                    <input
+                      type="number"
+                      min="5"
+                      max="300"
+                      step="5"
+                      className="custom-count-input"
+                      value={customTimedSeconds}
+                      onChange={handleCustomTimedSecondsChange}
+                      disabled={isLocked}
+                      title="Enter custom timer per word in seconds (5-300)"
+                    />
+                    <span className="custom-time-unit">sec</span>
+                  </div>
+                )}
+              </nav>
+            </div>
+          )}
+
           {/* Word Count Goal (Shown for non-endless modes) */}
           {mode !== 'endless' && (
             <div className="selector-group">
@@ -1209,6 +1405,21 @@ function App() {
                   {config.label}
                 </button>
               ))}
+              {mode !== 'casual' && (
+                <button
+                  type="button"
+                  className={`difficulty-btn hardcore-btn ${isHardcore ? 'active' : ''}`}
+                  disabled={isLocked}
+                  onClick={handleToggleHardcore}
+                  title={
+                    isLocked
+                      ? 'Settings locked during active game'
+                      : 'Toggle Hardcore rules (Strict inventory: 3 skips, limited hints for run)'
+                  }
+                >
+                  ⚡ Hardcore {isHardcore ? 'ON' : 'OFF'}
+                </button>
+              )}
             </nav>
           </div>
         </div>
@@ -1221,10 +1432,10 @@ function App() {
       </div>
 
       {/* Hardcore Mode Status Bar / Inventory */}
-      {mode === 'hardcore' && (
+      {isHardcore && (
         <section className="hardcore-hud" aria-label="Hardcore inventory">
           <div className="hardcore-hud-title">
-            <span>Hardcore Rules</span>
+            <span>⚡ Hardcore Rules</span>
           </div>
           <div className="hardcore-badges">
             <span
@@ -1246,6 +1457,11 @@ function App() {
               className={`hardcore-pill ${hardcoreHintsLeft['first-letter'] > 0 ? 'active' : 'empty'}`}
             >
               1st Letter: {hardcoreHintsLeft['first-letter']}/1
+            </span>
+            <span
+              className={`hardcore-pill ${hardcoreHintsLeft['random-letter'] > 0 ? 'active' : 'empty'}`}
+            >
+              Random Letter: {hardcoreHintsLeft['random-letter']}/{maxHcRandomLetterHints}
             </span>
           </div>
         </section>
@@ -1284,8 +1500,10 @@ function App() {
               ? isEndlessTimed
                 ? `Endless • ${endlessTimerOption === '60' ? '1 Min' : endlessTimerOption === '120' ? '2 Mins' : `${customEndlessTime}s`}`
                 : 'Endless • Untimed'
-              : `${targetWordsCount} Words`
-          } • {DIFFICULTY_CONFIG[difficulty]?.label})
+              : mode === 'custom_timed'
+                ? `${targetWordsCount} Words • ${customTimedOption === 'custom' ? `${customTimedSeconds}s` : `${customTimedOption}s`}`
+                : `${targetWordsCount} Words`
+          } • {DIFFICULTY_CONFIG[difficulty]?.label}{isHardcore ? ' • ⚡ Hardcore' : ''})
         </button>
       )}
 
@@ -1313,14 +1531,20 @@ function App() {
           <div className="toast-container" aria-live="polite">
             {successToast && (
               <div className="success-toast">
-                <span>Correct! +{successToast.points} pts</span>
-                {successToast.timeBonus && (
-                  <span className="time-bonus-toast">+{successToast.timeBonus}s</span>
+                {successToast.message ? (
+                  <span>{successToast.message}</span>
+                ) : (
+                  <>
+                    <span>Correct! +{successToast.points} pts</span>
+                    {successToast.timeBonus && (
+                      <span className="time-bonus-toast">+{successToast.timeBonus}s</span>
+                    )}
+                    {mode !== 'casual' && successToast.streak > 1 && (
+                      <span>(Streak x{successToast.streak})</span>
+                    )}
+                    {mode !== 'casual' && successToast.speedBonus && <span>(Speed Bonus!)</span>}
+                  </>
                 )}
-                {mode !== 'casual' && successToast.streak > 1 && (
-                  <span>(Streak x{successToast.streak})</span>
-                )}
-                {mode !== 'casual' && successToast.speedBonus && <span>(Speed Bonus!)</span>}
               </div>
             )}
           </div>
@@ -1333,8 +1557,8 @@ function App() {
               <h2 className={`round-complete-title ${isTimeUp ? 'time-up' : ''}`}>
                 {isRoundComplete
                   ? 'Round Complete!'
-                  : mode === 'hardcore'
-                    ? 'Game Over'
+                  : isHardcore
+                    ? 'Game Over - Hardcore Run Ended'
                     : isEndlessTimed
                       ? 'Time Expired - Run Ended!'
                       : "Time's Up!"}
@@ -1439,6 +1663,14 @@ function App() {
                     ? `Random (${displayDifficulty.toUpperCase()})`
                     : DIFFICULTY_CONFIG[displayDifficulty]?.label}
                 </span>
+                {isHardcore && (
+                  <>
+                    {' '}
+                    <span className="difficulty-tag hardcore">
+                      ⚡ Hardcore
+                    </span>
+                  </>
+                )}
               </div>
 
               <p className="outcome">{currentWord.jumbled}</p>
@@ -1447,7 +1679,7 @@ function App() {
               <div className="hints-panel" onMouseDown={(e) => e.preventDefault()}>
                 <div className="hints-header">
                   <span>
-                    Hints {mode === 'hardcore' ? '(1 of each for entire run)' : ''}
+                    Hints {isHardcore ? '(Strict inventory for entire run)' : ''}
                   </span>
                 </div>
                 <div className="hint-buttons-group">
@@ -1461,14 +1693,14 @@ function App() {
                     }}
                     disabled={
                       Boolean(hints.category) ||
-                      (mode === 'hardcore' && hardcoreHintsLeft.category <= 0) ||
+                      (isHardcore && hardcoreHintsLeft.category <= 0) ||
                       loadingHint === 'category' ||
                       showQuitModal
                     }
                   >
-                    {hints.category
-                      ? 'Category (Active)'
-                      : mode === 'hardcore'
+                    💡 {hints.category
+                      ? 'Category Revealed'
+                      : isHardcore
                         ? `Category (${hardcoreHintsLeft.category} left)`
                         : loadingHint === 'category'
                           ? 'Loading...'
@@ -1484,14 +1716,14 @@ function App() {
                     }}
                     disabled={
                       Boolean(hints.definition) ||
-                      (mode === 'hardcore' && hardcoreHintsLeft.definition <= 0) ||
+                      (isHardcore && hardcoreHintsLeft.definition <= 0) ||
                       loadingHint === 'definition' ||
                       showQuitModal
                     }
                   >
-                    {hints.definition
-                      ? 'Definition (Active)'
-                      : mode === 'hardcore'
+                    📖 {hints.definition
+                      ? 'Definition Revealed'
+                      : isHardcore
                         ? `Definition (${hardcoreHintsLeft.definition} left)`
                         : loadingHint === 'definition'
                           ? 'Loading...'
@@ -1507,18 +1739,38 @@ function App() {
                     }}
                     disabled={
                       Boolean(hints['first-letter']) ||
-                      (mode === 'hardcore' && hardcoreHintsLeft['first-letter'] <= 0) ||
+                      (isHardcore && hardcoreHintsLeft['first-letter'] <= 0) ||
                       loadingHint === 'first-letter' ||
                       showQuitModal
                     }
                   >
-                    {hints['first-letter']
-                      ? '1st Letter (Active)'
-                      : mode === 'hardcore'
+                    🔤 {hints['first-letter']
+                      ? `Starts with "${hints['first-letter']}"`
+                      : isHardcore
                         ? `1st Letter (${hardcoreHintsLeft['first-letter']} left)`
                         : loadingHint === 'first-letter'
                           ? 'Loading...'
-                          : 'Reveal 1st Letter'}
+                          : '1st Letter'}
+                  </button>
+                  <button
+                    type="button"
+                    className={`hint-btn ${randomLetterHintsLeft <= 0 ? 'revealed' : ''}`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={handleRandomLetterHint}
+                    disabled={
+                      randomLetterHintsLeft <= 0 ||
+                      showQuitModal ||
+                      loading
+                    }
+                    title={
+                      isHardcore
+                        ? `Reveal a random letter (${randomLetterHintsLeft} left for entire run)`
+                        : `Reveal a random letter (${randomLetterHintsLeft} left for this word)`
+                    }
+                  >
+                    ✨ {randomLetterHintsLeft > 0
+                      ? `Random Letter (${randomLetterHintsLeft} left)`
+                      : 'Random Letter (0 left)'}
                   </button>
                 </div>
 
@@ -1557,7 +1809,7 @@ function App() {
                   {Array.from({ length: currentWord.jumbled.length }).map((_, index) => {
                     const letter = letters[index] || '';
                     const isCorrectPlace =
-                      mode === 'casual' &&
+                      allowGreenCheck &&
                       Boolean(currentWord.answer) &&
                       Boolean(letter) &&
                       letter.toLowerCase() === currentWord.answer[index]?.toLowerCase();
@@ -1601,10 +1853,10 @@ function App() {
                     onClick={handleSkipWord}
                     disabled={
                       showQuitModal ||
-                      (mode === 'hardcore' && hardcoreSkipsLeft <= 0)
+                      (isHardcore && hardcoreSkipsLeft <= 0)
                     }
                   >
-                    {mode === 'hardcore'
+                    {isHardcore
                       ? hardcoreSkipsLeft > 0
                         ? `Skip (${hardcoreSkipsLeft} left)`
                         : 'No Skips Left'
