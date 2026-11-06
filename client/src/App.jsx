@@ -72,7 +72,10 @@ function App() {
   });
   const [loadingHint, setLoadingHint] = useState(null);
 
-  // Random Letter Hint: tracked per word for standard play
+  // Locked letter indices (revealed by the "Reveal Letter" hint - locked for the current word, released on pass/skip/fail)
+  const [lockedIndices, setLockedIndices] = useState([]);
+
+  // Reveal Letter Hint: tracked per word for standard play (reverted back to 2 per word)
   const [wordRandomLettersUsed, setWordRandomLettersUsed] = useState(0);
 
   // Hardcore Session Limits: 3 skips total & limited hints for the entire run
@@ -207,33 +210,58 @@ function App() {
   // Green check mark allowed in casual mode for all difficulties, or in easy/medium for non-hardcore timed modes
   const allowGreenCheck = mode === 'casual' || (!isHardcore && isEasyOrMed);
 
-  // Maximum random letter hints allowed (1 for easy/medium, 2 for hard)
-  const maxRandomLettersForWord = activeWordDiff === 'hard' ? 2 : 1;
+  // Maximum reveal letter hints allowed per word for standard play (reverted back to 2)
+  const maxRandomLettersForWord = 2;
   const maxHcRandomLetterHints = (difficulty === 'hard') ? 2 : 1;
 
-  // Remaining random letter hints for current word or run
+  // Remaining reveal letter hints: strict run-scoped inventory in Hardcore; 2 per word in standard modes
   const randomLetterHintsLeft = isHardcore
     ? (hardcoreHintsLeft['random-letter'] !== undefined ? hardcoreHintsLeft['random-letter'] : maxHcRandomLetterHints)
     : Math.max(0, maxRandomLettersForWord - wordRandomLettersUsed);
 
+  // Check if all letters in the current word are already locked/revealed
+  const allLettersRevealed = Boolean(currentWord?.answer) && lockedIndices.length >= currentWord.answer.length;
+
+  // Disabled check for Reveal Letter hint
+  const isRandomLetterDisabled = randomLetterHintsLeft <= 0 || allLettersRevealed;
+
   // User is locked in settings while a game is actively running
   const isLocked = gameStarted && !isTimeUp && !isRoundComplete;
 
-  // Helper to focus the current active/empty letter box
-  const focusActiveBox = useCallback(() => {
+  // Helper to focus the current active/empty letter box (or the end of the word when full or requested)
+  const focusActiveBox = useCallback((preferEnd = false) => {
     if (!gameStarted || isTimeUp || isRoundComplete || showQuitModal) return;
-    const emptyIndex = letters.findIndex((l) => !l);
-    const targetIdx = emptyIndex !== -1 ? emptyIndex : Math.max(0, letters.length - 1);
+    const emptyIndex = letters.findIndex((l, idx) => !l && !lockedIndices.includes(idx));
+
+    let targetIdx = -1;
+    if (emptyIndex !== -1 && !preferEnd) {
+      targetIdx = emptyIndex;
+    } else {
+      // Find the last unlocked box (end of word)
+      for (let i = letters.length - 1; i >= 0; i--) {
+        if (!lockedIndices.includes(i)) {
+          targetIdx = i;
+          break;
+        }
+      }
+      if (targetIdx === -1) {
+        targetIdx = emptyIndex !== -1 ? emptyIndex : 0;
+      }
+    }
+
     const targetEl = boxRefs.current[targetIdx] || inputRef.current;
     if (targetEl) {
       targetEl.focus();
+      targetEl.select?.();
     }
-  }, [gameStarted, isTimeUp, isRoundComplete, showQuitModal, letters]);
+  }, [gameStarted, isTimeUp, isRoundComplete, showQuitModal, letters, lockedIndices]);
 
   // Fetch word reveal when time runs out (Loss in timed mode)
   const handleTimeUp = useCallback(async (wordId) => {
     setIsTimeUp(true);
     setIsWrong(false);
+    setLockedIndices([]);
+    setWordRandomLettersUsed(0);
     endTimeRef.current = null;
     pausedRemainingMsRef.current = null;
 
@@ -297,8 +325,9 @@ function App() {
       setRevealedAnswer(null);
       setUserInput('');
       setLetters([]);
-      setHints({ category: null, definition: null, 'first-letter': null });
+      setLockedIndices([]);
       setWordRandomLettersUsed(0);
+      setHints({ category: null, definition: null, 'first-letter': null });
       setLoadingHint(null);
 
       // Initialize countdown timer with precision timestamp
@@ -349,18 +378,22 @@ function App() {
     [mode, difficulty, endlessTimerOption, getEndlessInitialDuration, getActiveDuration]
   );
 
-  // Synchronize letters array whenever current word updates
+  // Synchronize letters array whenever current word updates (releases locks on next word)
   useEffect(() => {
     if (currentWord?.jumbled) {
       const len = currentWord.jumbled.length;
       setLetters(Array(len).fill(''));
       setUserInput('');
+      setLockedIndices([]);
+      setWordRandomLettersUsed(0);
       setTimeout(() => {
         boxRefs.current[0]?.focus();
       }, 50);
     } else {
       setLetters([]);
       setUserInput('');
+      setLockedIndices([]);
+      setWordRandomLettersUsed(0);
     }
   }, [currentWord]);
 
@@ -406,7 +439,7 @@ function App() {
     }
   };
 
-  // Handle Random Letter Hint: answers a random letter into the correct box
+  // Handle Reveal Letter Hint: answers a random letter and locks it into its box
   const handleRandomLetterHint = () => {
     if (
       !currentWord ||
@@ -419,37 +452,43 @@ function App() {
       return;
     }
 
-    if (randomLetterHintsLeft <= 0) {
+    if (isRandomLetterDisabled) {
       return;
     }
 
-    // Collect indices where letter is not yet correctly filled
-    const availableIndices = [];
+    // Collect indices where letter is not yet locked
+    const unlockedIndices = [];
     for (let i = 0; i < currentWord.answer.length; i++) {
-      if (letters[i]?.toUpperCase() !== currentWord.answer[i]?.toUpperCase()) {
-        availableIndices.push(i);
+      if (!lockedIndices.includes(i)) {
+        unlockedIndices.push(i);
       }
     }
 
-    if (availableIndices.length === 0) {
+    if (unlockedIndices.length === 0) {
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
       setSuccessToast({
         points: 0,
-        message: 'All letters are already correctly answered!'
+        message: 'All letters in this word are already revealed!'
       });
       toastTimeoutRef.current = setTimeout(() => setSuccessToast(null), 2000);
       return;
     }
 
-    // Randomly choose one unrevealed index
-    const chosenIdx = availableIndices[Math.floor(Math.random() * availableIndices.length)];
+    // Prioritize indices that aren't yet filled with the correct letter
+    const incorrectOrEmpty = unlockedIndices.filter(
+      (i) => letters[i]?.toUpperCase() !== currentWord.answer[i]?.toUpperCase()
+    );
+    const candidatePool = incorrectOrEmpty.length > 0 ? incorrectOrEmpty : unlockedIndices;
+
+    // Randomly choose one unrevealed index from candidate pool
+    const chosenIdx = candidatePool[Math.floor(Math.random() * candidatePool.length)];
     const correctChar = currentWord.answer[chosenIdx].toUpperCase();
 
     const newLetters = [...letters];
     newLetters[chosenIdx] = correctChar;
     setLetters(newLetters);
     setUserInput(newLetters.join(''));
-
+    setLockedIndices((prev) => (prev.includes(chosenIdx) ? prev : [...prev, chosenIdx]));
     setWordRandomLettersUsed((prev) => prev + 1);
 
     if (isHardcore) {
@@ -462,15 +501,17 @@ function App() {
     if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
     setSuccessToast({
       points: 0,
-      message: `Letter #${chosenIdx + 1} revealed: "${correctChar}"`
+      message: `Letter #${chosenIdx + 1} revealed & locked: "${correctChar}"`
     });
     toastTimeoutRef.current = setTimeout(() => setSuccessToast(null), 2000);
 
     setTimeout(() => {
-      const nextEmpty = newLetters.findIndex((l) => !l);
+      const nextEmpty = newLetters.findIndex(
+        (l, idx) => !l && !lockedIndices.includes(idx) && idx !== chosenIdx
+      );
       if (nextEmpty !== -1 && boxRefs.current[nextEmpty]) {
         boxRefs.current[nextEmpty].focus();
-        boxRefs.current[nextEmpty].select();
+        boxRefs.current[nextEmpty].select?.();
       }
     }, 50);
   };
@@ -540,8 +581,8 @@ function App() {
     currentWordRef.current = null;
     setUserInput('');
     setLetters([]);
+    setLockedIndices([]);
     setHints({ category: null, definition: null, 'first-letter': null });
-    setWordRandomLettersUsed(0);
     setScore(0);
     setCurrentWordNumber(1);
     currentWordNumberRef.current = 1;
@@ -595,7 +636,7 @@ function App() {
     setTotalTries(0);
     setTotalCorrectTries(0);
     setShowBreakdownModal(false);
-    setWordRandomLettersUsed(0);
+    setLockedIndices([]);
     await fetchNewWord(mode, difficulty, true);
   };
 
@@ -631,7 +672,7 @@ function App() {
     setTotalTries(0);
     setTotalCorrectTries(0);
     setShowBreakdownModal(false);
-    setWordRandomLettersUsed(0);
+    setLockedIndices([]);
     await fetchNewWord(mode, difficulty, true);
   };
 
@@ -642,8 +683,10 @@ function App() {
     }
   }, [currentWord, gameStarted, isTimeUp, isRoundComplete, showQuitModal]);
 
-  // Handle typing and auto-advancing across Wordle letter boxes
+  // Handle typing and auto-advancing across Wordle letter boxes (skipping locked boxes)
   const handleBoxChange = (index, e) => {
+    if (lockedIndices.includes(index)) return;
+
     const val = e.target.value;
     const char = val.slice(-1).toUpperCase();
 
@@ -664,31 +707,98 @@ function App() {
     setUserInput(newLetters.join(''));
     if (isWrong) setIsWrong(false);
 
-    if (index < letters.length - 1) {
-      boxRefs.current[index + 1]?.focus();
-      boxRefs.current[index + 1]?.select();
+    // Auto-advance to the next unlocked box
+    let nextIdx = -1;
+    for (let i = index + 1; i < letters.length; i++) {
+      if (!lockedIndices.includes(i)) {
+        nextIdx = i;
+        break;
+      }
+    }
+    if (nextIdx !== -1) {
+      boxRefs.current[nextIdx]?.focus();
+      boxRefs.current[nextIdx]?.select();
     }
   };
 
   const handleBoxKeyDown = (index, e) => {
     if (isWrong) setIsWrong(false);
 
+    // If currently focused on a locked box, prevent direct edits or deletions
+    if (lockedIndices.includes(index)) {
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        e.preventDefault();
+        let prevUnlocked = -1;
+        for (let i = index - 1; i >= 0; i--) {
+          if (!lockedIndices.includes(i)) {
+            prevUnlocked = i;
+            break;
+          }
+        }
+        if (prevUnlocked !== -1) {
+          boxRefs.current[prevUnlocked]?.focus();
+          boxRefs.current[prevUnlocked]?.select();
+        }
+        return;
+      }
+
+      if (/^[a-zA-Z]$/.test(e.key)) {
+        e.preventDefault();
+        let nextUnlocked = -1;
+        for (let i = index + 1; i < letters.length; i++) {
+          if (!lockedIndices.includes(i)) {
+            nextUnlocked = i;
+            break;
+          }
+        }
+        if (nextUnlocked === -1) {
+          nextUnlocked = letters.findIndex((_, i) => !lockedIndices.includes(i));
+        }
+        if (nextUnlocked !== -1) {
+          const char = e.key.toUpperCase();
+          const newLetters = [...letters];
+          newLetters[nextUnlocked] = char;
+          setLetters(newLetters);
+          setUserInput(newLetters.join(''));
+          boxRefs.current[nextUnlocked]?.focus();
+          boxRefs.current[nextUnlocked]?.select();
+        }
+        return;
+      }
+    }
+
     if (e.key === 'Backspace') {
-      if (!letters[index] && index > 0) {
-        e.preventDefault();
-        const newLetters = [...letters];
-        newLetters[index - 1] = '';
-        setLetters(newLetters);
-        setUserInput(newLetters.join(''));
-        boxRefs.current[index - 1]?.focus();
-        boxRefs.current[index - 1]?.select();
-      } else if (letters[index]) {
-        e.preventDefault();
+      e.preventDefault();
+
+      let prevUnlocked = -1;
+      for (let i = index - 1; i >= 0; i--) {
+        if (!lockedIndices.includes(i)) {
+          prevUnlocked = i;
+          break;
+        }
+      }
+
+      if (letters[index] && !lockedIndices.includes(index)) {
+        // Clear current box and move focus to previous unlocked box
         const newLetters = [...letters];
         newLetters[index] = '';
         setLetters(newLetters);
         setUserInput(newLetters.join(''));
+
+        if (prevUnlocked !== -1) {
+          boxRefs.current[prevUnlocked]?.focus();
+          boxRefs.current[prevUnlocked]?.select?.();
+        }
+      } else if (!letters[index] && prevUnlocked !== -1) {
+        // Current box is already empty: clear previous unlocked box and focus it
+        const newLetters = [...letters];
+        newLetters[prevUnlocked] = '';
+        setLetters(newLetters);
+        setUserInput(newLetters.join(''));
+        boxRefs.current[prevUnlocked]?.focus();
+        boxRefs.current[prevUnlocked]?.select?.();
       }
+      return;
     } else if (e.key === 'ArrowLeft' && index > 0) {
       e.preventDefault();
       boxRefs.current[index - 1]?.focus();
@@ -709,18 +819,32 @@ function App() {
     if (!pasted) return;
 
     const newLetters = [...letters];
-    let lastIndex = index;
-    for (let i = 0; i < pasted.length && index + i < letters.length; i++) {
-      newLetters[index + i] = pasted[i];
-      lastIndex = index + i;
+    let pasteCharIdx = 0;
+    let lastModifiedIdx = index;
+
+    for (let i = index; i < letters.length && pasteCharIdx < pasted.length; i++) {
+      if (!lockedIndices.includes(i)) {
+        newLetters[i] = pasted[pasteCharIdx];
+        lastModifiedIdx = i;
+        pasteCharIdx++;
+      }
     }
+
     setLetters(newLetters);
     setUserInput(newLetters.join(''));
     if (isWrong) setIsWrong(false);
 
-    const nextFocus = Math.min(lastIndex + 1, letters.length - 1);
-    boxRefs.current[nextFocus]?.focus();
-    boxRefs.current[nextFocus]?.select();
+    let nextFocus = -1;
+    for (let i = lastModifiedIdx + 1; i < letters.length; i++) {
+      if (!lockedIndices.includes(i)) {
+        nextFocus = i;
+        break;
+      }
+    }
+    if (nextFocus !== -1) {
+      boxRefs.current[nextFocus]?.focus();
+      boxRefs.current[nextFocus]?.select();
+    }
   };
 
   // Handle checking submitted answer
@@ -828,6 +952,10 @@ function App() {
         const newSolvedCount = roundSolvedCount + 1;
         setRoundSolvedCount(newSolvedCount);
 
+        // Release all locks and reset hint counter for next word
+        setLockedIndices([]);
+        setWordRandomLettersUsed(0);
+
         // Floating toast (hide streak info in casual mode)
         if (toastTimeoutRef.current) {
           clearTimeout(toastTimeoutRef.current);
@@ -869,7 +997,7 @@ function App() {
           return next;
         });
         setTotalTries((prev) => prev + 1);
-        focusActiveBox();
+        focusActiveBox(true);
       }
     } catch (err) {
       console.error('Error checking answer:', err);
@@ -931,6 +1059,10 @@ function App() {
     } else {
       setStreakBrokenNotice(false);
     }
+
+    // Release all locks and reset hint counter on skip
+    setLockedIndices([]);
+    setWordRandomLettersUsed(0);
 
     // Check if skipping the last word completes the round
     if (!isEndlessMode && currentWordNumber >= targetWordsCount) {
@@ -1144,7 +1276,7 @@ function App() {
         e.preventDefault();
         let lastFilled = -1;
         for (let i = letters.length - 1; i >= 0; i--) {
-          if (letters[i]) {
+          if (letters[i] && !lockedIndices.includes(i)) {
             lastFilled = i;
             break;
           }
@@ -1154,9 +1286,22 @@ function App() {
           newLetters[lastFilled] = '';
           setLetters(newLetters);
           setUserInput(newLetters.join(''));
-          boxRefs.current[lastFilled]?.focus();
+
+          let prevUnlocked = -1;
+          for (let i = lastFilled - 1; i >= 0; i--) {
+            if (!lockedIndices.includes(i)) {
+              prevUnlocked = i;
+              break;
+            }
+          }
+          const focusTarget = prevUnlocked !== -1 ? prevUnlocked : lastFilled;
+          boxRefs.current[focusTarget]?.focus();
+          boxRefs.current[focusTarget]?.select?.();
         } else {
-          boxRefs.current[0]?.focus();
+          const firstUnlocked = letters.findIndex((_, i) => !lockedIndices.includes(i));
+          if (firstUnlocked !== -1) {
+            boxRefs.current[firstUnlocked]?.focus();
+          }
         }
         return;
       }
@@ -1164,23 +1309,39 @@ function App() {
       if (/^[a-zA-Z]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
         const char = e.key.toUpperCase();
-        const emptyIdx = letters.findIndex((l) => !l);
-        const targetIdx = emptyIdx !== -1 ? emptyIdx : Math.max(0, letters.length - 1);
-        const newLetters = [...letters];
-        newLetters[targetIdx] = char;
-        setLetters(newLetters);
-        setUserInput(newLetters.join(''));
-        if (isWrong) setIsWrong(false);
+        let targetIdx = letters.findIndex((l, i) => !l && !lockedIndices.includes(i));
+        if (targetIdx === -1) {
+          for (let i = letters.length - 1; i >= 0; i--) {
+            if (!lockedIndices.includes(i)) {
+              targetIdx = i;
+              break;
+            }
+          }
+        }
+        if (targetIdx !== -1) {
+          const newLetters = [...letters];
+          newLetters[targetIdx] = char;
+          setLetters(newLetters);
+          setUserInput(newLetters.join(''));
+          if (isWrong) setIsWrong(false);
 
-        const nextFocus = Math.min(targetIdx + 1, letters.length - 1);
-        boxRefs.current[nextFocus]?.focus();
-        boxRefs.current[nextFocus]?.select();
+          let nextFocus = -1;
+          for (let i = targetIdx + 1; i < letters.length; i++) {
+            if (!lockedIndices.includes(i)) {
+              nextFocus = i;
+              break;
+            }
+          }
+          const focusIdx = nextFocus !== -1 ? nextFocus : targetIdx;
+          boxRefs.current[focusIdx]?.focus();
+          boxRefs.current[focusIdx]?.select();
+        }
       }
     };
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [gameStarted, isTimeUp, isRoundComplete, showQuitModal, loading, letters, isWrong]);
+  }, [gameStarted, isTimeUp, isRoundComplete, showQuitModal, loading, letters, isWrong, lockedIndices]);
 
   // Timer color severity and display
   const maxDuration = isEndlessTimed
@@ -1461,7 +1622,7 @@ function App() {
             <span
               className={`hardcore-pill ${hardcoreHintsLeft['random-letter'] > 0 ? 'active' : 'empty'}`}
             >
-              Random Letter: {hardcoreHintsLeft['random-letter']}/{maxHcRandomLetterHints}
+              Reveal Letter: {hardcoreHintsLeft['random-letter']}/{maxHcRandomLetterHints}
             </span>
           </div>
         </section>
@@ -1754,23 +1915,25 @@ function App() {
                   </button>
                   <button
                     type="button"
-                    className={`hint-btn ${randomLetterHintsLeft <= 0 ? 'revealed' : ''}`}
+                    className={`hint-btn ${isRandomLetterDisabled ? 'revealed' : ''}`}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={handleRandomLetterHint}
                     disabled={
-                      randomLetterHintsLeft <= 0 ||
+                      isRandomLetterDisabled ||
                       showQuitModal ||
                       loading
                     }
                     title={
                       isHardcore
-                        ? `Reveal a random letter (${randomLetterHintsLeft} left for entire run)`
-                        : `Reveal a random letter (${randomLetterHintsLeft} left for this word)`
+                        ? `Reveal a letter (${randomLetterHintsLeft} left for entire run)`
+                        : allLettersRevealed
+                          ? 'All letters in this word are revealed'
+                          : `Reveal a letter (${randomLetterHintsLeft} left for this word)`
                     }
                   >
-                    ✨ {randomLetterHintsLeft > 0
-                      ? `Random Letter (${randomLetterHintsLeft} left)`
-                      : 'Random Letter (0 left)'}
+                    ✨ {allLettersRevealed
+                      ? 'All Letters Revealed'
+                      : `Reveal Letter (${randomLetterHintsLeft} left)`}
                   </button>
                 </div>
 
@@ -1808,8 +1971,9 @@ function App() {
                 >
                   {Array.from({ length: currentWord.jumbled.length }).map((_, index) => {
                     const letter = letters[index] || '';
+                    const isLockedLetter = lockedIndices.includes(index);
                     const isCorrectPlace =
-                      allowGreenCheck &&
+                      (allowGreenCheck || isLockedLetter) &&
                       Boolean(currentWord.answer) &&
                       Boolean(letter) &&
                       letter.toLowerCase() === currentWord.answer[index]?.toLowerCase();
@@ -1830,14 +1994,16 @@ function App() {
                         autoCapitalize="characters"
                         spellCheck="false"
                         id={index === 0 ? 'input' : `input-${index}`}
-                        className={`wordle-box ${letter ? 'has-letter' : ''} ${isGreen ? 'box-correct' : ''}`}
+                        className={`wordle-box ${letter ? 'has-letter' : ''} ${isGreen ? 'box-correct' : ''} ${isLockedLetter ? 'box-locked' : ''}`}
                         value={letter}
+                        readOnly={isLockedLetter}
                         onChange={(e) => handleBoxChange(index, e)}
                         onKeyDown={(e) => handleBoxKeyDown(index, e)}
                         onPaste={(e) => handleBoxPaste(index, e)}
                         onFocus={(e) => e.target.select()}
                         disabled={showQuitModal}
-                        aria-label={`Letter ${index + 1} of ${currentWord.jumbled.length}`}
+                        title={isLockedLetter ? `Revealed letter "${letter}" (Locked)` : undefined}
+                        aria-label={`Letter ${index + 1} of ${currentWord.jumbled.length}${isLockedLetter ? ' (Revealed and Locked)' : ''}`}
                       />
                     );
                   })}

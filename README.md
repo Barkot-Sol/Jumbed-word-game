@@ -41,7 +41,7 @@ Hardcore is a high-stakes challenge modifier available for **all modes except Ca
   - **Category Hint:** 1 use per run.
   - **Definition Hint:** 1 use per run.
   - **1st Letter Hint:** 1 use per run.
-  - **Random Letter Hint:** 1 use per run on Easy/Medium difficulty, 2 uses per run on Hard difficulty.
+  - **Reveal Letter Hint:** 1 use per run on Easy/Medium difficulty, 2 uses per run on Hard difficulty.
 - **No Letter-Position Assistance:** Green check mark feedback is disabled across all difficulties when Hardcore is active.
 - **Score Multiplier:** Earn $+5$ bonus points for every successfully solved word in Hardcore mode.
 
@@ -60,9 +60,10 @@ Hardcore is a high-stakes challenge modifier available for **all modes except Ca
 1. **Category Hint:** Displays the part of speech and topic context (e.g., `Noun • Animals & Wildlife`).
 2. **Definition Hint:** Displays an authentic dictionary definition.
 3. **1st Letter Hint:** Reveals the starting letter of the target word.
-4. **✨ Random Letter Hint:** Automatically answers and locks a randomly selected unrevealed/incorrect letter directly into its box.
-   - **Standard Rules:** 1 use per word on Easy and Medium; 2 uses per word on Hard (refreshes on each new word).
-   - **Hardcore Rules:** 1 use per run on Easy and Medium; 2 uses per run on Hard (from the run inventory).
+4. **✨ Reveal Letter Hint:** Automatically answers and firmly locks a randomly selected unrevealed or incorrect letter directly into its box.
+   - **Letter Locking & Release:** Once revealed, the letter cannot be deleted, backspaced, or overwritten (`readOnly` and `.box-locked`) for the active word. All locks automatically release when the word is passed (solved), skipped, or failed (timeout).
+   - **Standard Rules (Non-Hardcore):** Up to **2 uses per word**.
+   - **Hardcore Rules:** Strict run-scoped inventory (1 use per run on Easy/Medium difficulty, 2 uses per run on Hard difficulty).
 
 ---
 

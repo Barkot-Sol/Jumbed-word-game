@@ -920,6 +920,24 @@ h1 {
   animation: wordleFlip 0.25s ease;
 }
 
+/* Locked box revealed by the Reveal Letter hint (cannot be deleted or overwritten) */
+.wordle-box.box-locked {
+  background-color: #1b5e20 !important;
+  border-color: #1b5e20 !important;
+  color: #ffffff !important;
+  font-weight: 800 !important;
+  cursor: default !important;
+  caret-color: transparent !important;
+  user-select: none !important;
+  box-shadow: 0 4px 12px rgba(27, 94, 32, 0.45), inset 0 2px 4px rgba(0, 0, 0, 0.2) !important;
+}
+
+.wordle-box.box-locked:focus {
+  outline: none !important;
+  border-color: #1b5e20 !important;
+  box-shadow: 0 0 0 3px rgba(46, 125, 50, 0.4) !important;
+}
+
 @keyframes wordlePop {
   0% { transform: scale(0.9); }
   50% { transform: scale(1.08); }
