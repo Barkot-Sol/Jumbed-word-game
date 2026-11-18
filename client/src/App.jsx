@@ -9,9 +9,7 @@ const MODE_CONFIG = {
 const TIMED_SUBMODES = [
   { id: 'speed', label: 'Speed (20s)', duration: 20 },
   { id: 'blitz', label: 'Blitz (10s)', duration: 10 },
-  { id: '15', label: '15s', duration: 15 },
   { id: '30', label: '30s', duration: 30 },
-  { id: '45', label: '45s', duration: 45 },
   { id: '60', label: '60s', duration: 60 },
   { id: 'custom', label: 'Custom', duration: null }
 ];
@@ -1478,7 +1476,7 @@ function App() {
 
   return (
     <main>
-      <h1>Jumbled Word Generator</h1>
+      <h1>Jumbled</h1>
 
       {/* Settings Bar: Mode, Word Limit, and Difficulty */}
       <div className="settings-bar">
@@ -1755,13 +1753,12 @@ function App() {
                 ? `Endless • ${endlessTimerOption === '60' ? '1 Min' : endlessTimerOption === '120' ? '2 Mins' : `${customEndlessTime}s`}`
                 : 'Endless • Untimed'
               : mode === 'timed'
-                ? `${
-                    timedOption === 'speed'
-                      ? 'Speed 20s'
-                      : timedOption === 'blitz'
-                        ? 'Blitz 10s'
-                        : `${timedOption === 'custom' ? customTimedSeconds : timedOption}s`
-                  } • ${targetWordsCount} Words`
+                ? `${timedOption === 'speed'
+                  ? 'Speed 20s'
+                  : timedOption === 'blitz'
+                    ? 'Blitz 10s'
+                    : `${timedOption === 'custom' ? customTimedSeconds : timedOption}s`
+                } • ${targetWordsCount} Words`
                 : `${targetWordsCount} Words`
           } • {DIFFICULTY_CONFIG[difficulty]?.label}{isHardcore ? ' • Hardcore' : ''})
         </button>
