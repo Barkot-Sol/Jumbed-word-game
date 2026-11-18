@@ -1,12 +1,20 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 
 const MODE_CONFIG = {
-  speed: { label: 'Speed (20s)', duration: 20 },
-  blitz: { label: 'Blitz (10s)', duration: 10 },
-  custom_timed: { label: 'Custom Timed', duration: 30, isCustomTimed: true },
+  timed: { label: 'Timed', duration: 20, isTimed: true },
   casual: { label: 'Casual', duration: null },
   endless: { label: 'Endless', duration: null, isEndless: true }
 };
+
+const TIMED_SUBMODES = [
+  { id: 'speed', label: 'Speed (20s)', duration: 20 },
+  { id: 'blitz', label: 'Blitz (10s)', duration: 10 },
+  { id: '15', label: '15s', duration: 15 },
+  { id: '30', label: '30s', duration: 30 },
+  { id: '45', label: '45s', duration: 45 },
+  { id: '60', label: '60s', duration: 60 },
+  { id: 'custom', label: 'Custom', duration: null }
+];
 
 const DIFFICULTY_CONFIG = {
   easy: { label: 'Easy', desc: '4-6 letters', basePoints: 10, badgeClass: 'easy' },
@@ -36,11 +44,11 @@ function App() {
   // Hardcore difficulty setting (Strict inventory rules, available for all modes except casual)
   const [isHardcore, setIsHardcore] = useState(false);
 
-  // Game Mode: 'speed' | 'blitz' | 'custom_timed' | 'casual' | 'endless'
-  const [mode, setMode] = useState('speed');
+  // Game Mode: 'timed' | 'casual' | 'endless'
+  const [mode, setMode] = useState('timed');
 
-  // Custom Timed Mode Settings ('15' | '30' | '45' | '60' | 'custom')
-  const [customTimedOption, setCustomTimedOption] = useState('30');
+  // Timed Mode Sub-mode Settings ('speed' | 'blitz' | '15' | '30' | '45' | '60' | 'custom')
+  const [timedOption, setTimedOption] = useState('speed');
   const [customTimedSeconds, setCustomTimedSeconds] = useState(30);
 
   // Endless Mode Timer Settings ('untimed' | '60' | '120' | 'custom')
@@ -88,11 +96,11 @@ function App() {
   });
 
   // Countdown Timer
-  const [timeLeft, setTimeLeft] = useState(MODE_CONFIG.speed.duration);
+  const [timeLeft, setTimeLeft] = useState(20);
   const [isTimeUp, setIsTimeUp] = useState(false);
   const [revealedAnswer, setRevealedAnswer] = useState(null);
 
-  // Score & Streak tracking (Individual streak & best streak per mode; casual mode has no streaks)
+  // Score & Streak tracking (Individual streak & best streak per mode/submode; casual mode has no streaks)
   const [score, setScore] = useState(0);
   const [streaks, setStreaks] = useState({
     speed: 0,
@@ -136,9 +144,19 @@ function App() {
     };
   });
 
-  const currentStreak = mode === 'casual' ? 0 : (streaks[mode] || 0);
-  const currentBestStreak = mode === 'casual' ? 0 : (bestStreaks[mode] || 0);
-  const currentHighScore = highScores[mode] || 0;
+  // Key used for per-mode/submode streaks and high scores
+  const activeStatsKey =
+    mode === 'timed'
+      ? timedOption === 'speed'
+        ? 'speed'
+        : timedOption === 'blitz'
+          ? 'blitz'
+          : 'custom_timed'
+      : mode;
+
+  const currentStreak = mode === 'casual' ? 0 : (streaks[activeStatsKey] || 0);
+  const currentBestStreak = mode === 'casual' ? 0 : (bestStreaks[activeStatsKey] || 0);
+  const currentHighScore = highScores[activeStatsKey] || 0;
 
   // Non-blocking quick feedback
   const [successToast, setSuccessToast] = useState(null);
@@ -158,6 +176,26 @@ function App() {
   const currentWordRef = useRef(null);
   const currentWordTriesRef = useRef(0);
   const currentWordNumberRef = useRef(1);
+  const lettersRef = useRef([]);
+  const lockedIndicesRef = useRef([]);
+  const wordRandomLettersUsedRef = useRef(0);
+
+  // Synchronized setters to prevent stale-closure / rapid-click race conditions on letters & locks
+  const updateLetters = useCallback((nextLetters) => {
+    lettersRef.current = nextLetters;
+    setLetters(nextLetters);
+    setUserInput(nextLetters.join(''));
+  }, []);
+
+  const updateLockedIndices = useCallback((nextLocked) => {
+    lockedIndicesRef.current = nextLocked;
+    setLockedIndices(nextLocked);
+  }, []);
+
+  const updateWordRandomLettersUsed = useCallback((nextCount) => {
+    wordRandomLettersUsedRef.current = nextCount;
+    setWordRandomLettersUsed(nextCount);
+  }, []);
 
   // Overall accuracy based on total correct answers vs total submitted tries
   const accuracyPercent = totalTries > 0 ? Math.round((totalCorrectTries / totalTries) * 100) : 0;
@@ -171,13 +209,18 @@ function App() {
       ? Math.max(3, parseInt(customWordCount, 10) || 3)
       : parseInt(wordCountOption, 10) || 10;
 
-  // Custom Timed per-word duration
-  const getCustomTimedDuration = useCallback(() => {
-    if (customTimedOption === 'custom') {
-      return Math.max(5, Math.min(300, parseInt(customTimedSeconds, 10) || 30));
-    }
-    return parseInt(customTimedOption, 10) || 30;
-  }, [customTimedOption, customTimedSeconds]);
+  // Timed Mode per-word duration (Speed 20s, Blitz 10s, presets, or Custom 5-300s)
+  const getTimedDuration = useCallback(
+    (option = timedOption) => {
+      if (option === 'speed') return 20;
+      if (option === 'blitz') return 10;
+      if (option === 'custom') {
+        return Math.max(5, Math.min(300, parseInt(customTimedSeconds, 10) || 30));
+      }
+      return parseInt(option, 10) || 30;
+    },
+    [timedOption, customTimedSeconds]
+  );
 
   // Initial duration for endless timed mode
   const getEndlessInitialDuration = useCallback(() => {
@@ -195,12 +238,12 @@ function App() {
       if (targetMode === 'endless') {
         return endlessTimerOption !== 'untimed' ? getEndlessInitialDuration() : null;
       }
-      if (targetMode === 'custom_timed') {
-        return getCustomTimedDuration();
+      if (targetMode === 'timed') {
+        return getTimedDuration();
       }
       return MODE_CONFIG[targetMode]?.duration || null;
     },
-    [mode, endlessTimerOption, getEndlessInitialDuration, getCustomTimedDuration]
+    [mode, endlessTimerOption, getEndlessInitialDuration, getTimedDuration]
   );
 
   // Active difficulty for word and hints calculation
@@ -219,8 +262,10 @@ function App() {
     ? (hardcoreHintsLeft['random-letter'] !== undefined ? hardcoreHintsLeft['random-letter'] : maxHcRandomLetterHints)
     : Math.max(0, maxRandomLettersForWord - wordRandomLettersUsed);
 
-  // Check if all letters in the current word are already locked/revealed
-  const allLettersRevealed = Boolean(currentWord?.answer) && lockedIndices.length >= currentWord.answer.length;
+  // Check if all non-first letters (indices 1..len-1) are already locked/revealed (index 0 is reserved for 1st Letter hint)
+  const nonFirstTotal = Math.max(0, (currentWord?.answer?.length || 0) - 1);
+  const lockedNonFirstCount = lockedIndices.filter((idx) => idx >= 1).length;
+  const allLettersRevealed = Boolean(currentWord?.answer) && lockedNonFirstCount >= nonFirstTotal;
 
   // Disabled check for Reveal Letter hint
   const isRandomLetterDisabled = randomLetterHintsLeft <= 0 || allLettersRevealed;
@@ -231,15 +276,17 @@ function App() {
   // Helper to focus the current active/empty letter box (or the end of the word when full or requested)
   const focusActiveBox = useCallback((preferEnd = false) => {
     if (!gameStarted || isTimeUp || isRoundComplete || showQuitModal) return;
-    const emptyIndex = letters.findIndex((l, idx) => !l && !lockedIndices.includes(idx));
+    const currentLetters = lettersRef.current;
+    const currentLocked = lockedIndicesRef.current;
+    const emptyIndex = currentLetters.findIndex((l, idx) => !l && !currentLocked.includes(idx));
 
     let targetIdx = -1;
     if (emptyIndex !== -1 && !preferEnd) {
       targetIdx = emptyIndex;
     } else {
       // Find the last unlocked box (end of word)
-      for (let i = letters.length - 1; i >= 0; i--) {
-        if (!lockedIndices.includes(i)) {
+      for (let i = currentLetters.length - 1; i >= 0; i--) {
+        if (!currentLocked.includes(i)) {
           targetIdx = i;
           break;
         }
@@ -254,14 +301,14 @@ function App() {
       targetEl.focus();
       targetEl.select?.();
     }
-  }, [gameStarted, isTimeUp, isRoundComplete, showQuitModal, letters, lockedIndices]);
+  }, [gameStarted, isTimeUp, isRoundComplete, showQuitModal]);
 
   // Fetch word reveal when time runs out (Loss in timed mode)
   const handleTimeUp = useCallback(async (wordId) => {
     setIsTimeUp(true);
     setIsWrong(false);
-    setLockedIndices([]);
-    setWordRandomLettersUsed(0);
+    updateLockedIndices([]);
+    updateWordRandomLettersUsed(0);
     endTimeRef.current = null;
     pausedRemainingMsRef.current = null;
 
@@ -269,14 +316,14 @@ function App() {
       clearInterval(timerRef.current);
     }
 
-    // Break active streak for current mode (casual mode has no streak)
+    // Break active streak for current mode/submode (casual mode has no streak)
     if (mode !== 'casual') {
       setStreaks((prev) => {
-        if ((prev[mode] || 0) > 0) {
+        if ((prev[activeStatsKey] || 0) > 0) {
           setStreakBrokenNotice(true);
           setTimeout(() => setStreakBrokenNotice(false), 3000);
         }
-        return { ...prev, [mode]: 0 };
+        return { ...prev, [activeStatsKey]: 0 };
       });
     }
 
@@ -314,7 +361,7 @@ function App() {
     ]);
     setCurrentWordTries(0);
     currentWordTriesRef.current = 0;
-  }, [mode]);
+  }, [mode, activeStatsKey, updateLockedIndices, updateWordRandomLettersUsed]);
 
   // Fetch a new jumbled word from Express backend by difficulty
   const fetchNewWord = useCallback(
@@ -323,10 +370,9 @@ function App() {
       setIsWrong(false);
       setIsTimeUp(false);
       setRevealedAnswer(null);
-      setUserInput('');
-      setLetters([]);
-      setLockedIndices([]);
-      setWordRandomLettersUsed(0);
+      updateLetters([]);
+      updateLockedIndices([]);
+      updateWordRandomLettersUsed(0);
       setHints({ category: null, definition: null, 'first-letter': null });
       setLoadingHint(null);
 
@@ -375,31 +421,54 @@ function App() {
         setLoading(false);
       }
     },
-    [mode, difficulty, endlessTimerOption, getEndlessInitialDuration, getActiveDuration]
+    [
+      mode,
+      difficulty,
+      endlessTimerOption,
+      getEndlessInitialDuration,
+      getActiveDuration,
+      updateLetters,
+      updateLockedIndices,
+      updateWordRandomLettersUsed
+    ]
   );
 
   // Synchronize letters array whenever current word updates (releases locks on next word)
   useEffect(() => {
     if (currentWord?.jumbled) {
       const len = currentWord.jumbled.length;
-      setLetters(Array(len).fill(''));
-      setUserInput('');
-      setLockedIndices([]);
-      setWordRandomLettersUsed(0);
+      updateLetters(Array(len).fill(''));
+      updateLockedIndices([]);
+      updateWordRandomLettersUsed(0);
       setTimeout(() => {
         boxRefs.current[0]?.focus();
       }, 50);
     } else {
-      setLetters([]);
-      setUserInput('');
-      setLockedIndices([]);
-      setWordRandomLettersUsed(0);
+      updateLetters([]);
+      updateLockedIndices([]);
+      updateWordRandomLettersUsed(0);
     }
-  }, [currentWord]);
+  }, [currentWord, updateLetters, updateLockedIndices, updateWordRandomLettersUsed]);
 
   // Request a specific hint from server
   const handleGetHint = async (type) => {
-    if (!currentWord || hints[type] || loadingHint || showQuitModal) return;
+    if (!currentWord || loadingHint || showQuitModal) return;
+
+    // If first-letter hint was already revealed, ensure box 0 stays filled & locked and never remove it
+    if (type === 'first-letter' && hints['first-letter']) {
+      const firstChar = hints['first-letter'].charAt(0).toUpperCase();
+      const len = currentWord.jumbled?.length || currentWord.answer?.length || lettersRef.current.length;
+      const nextLetters = lettersRef.current.length === len ? [...lettersRef.current] : Array(len).fill('');
+      nextLetters[0] = firstChar;
+      updateLetters(nextLetters);
+      if (!lockedIndicesRef.current.includes(0)) {
+        updateLockedIndices([...lockedIndicesRef.current, 0]);
+      }
+      focusActiveBox();
+      return;
+    }
+
+    if (hints[type]) return;
 
     // In hardcore difficulty, check remaining hint inventory
     if (isHardcore && (hardcoreHintsLeft[type] || 0) <= 0) {
@@ -416,12 +485,31 @@ function App() {
           type
         })
       });
+      let hintValue = null;
       if (res.ok) {
         const data = await res.json();
+        hintValue = data.hint;
+      } else if (type === 'first-letter' && currentWord.answer) {
+        hintValue = currentWord.answer.charAt(0).toUpperCase();
+      }
+
+      if (hintValue) {
         setHints((prev) => ({
           ...prev,
-          [type]: data.hint
+          [type]: hintValue
         }));
+
+        // Place and lock the first letter directly into box 0
+        if (type === 'first-letter') {
+          const firstChar = hintValue.charAt(0).toUpperCase();
+          const len = currentWord.jumbled?.length || currentWord.answer?.length || lettersRef.current.length;
+          const nextLetters = lettersRef.current.length === len ? [...lettersRef.current] : Array(len).fill('');
+          nextLetters[0] = firstChar;
+          updateLetters(nextLetters);
+          if (!lockedIndicesRef.current.includes(0)) {
+            updateLockedIndices([...lockedIndicesRef.current, 0]);
+          }
+        }
 
         // Deduct 1 hint from Hardcore inventory
         if (isHardcore) {
@@ -435,7 +523,9 @@ function App() {
       console.error('Error fetching hint:', err);
     } finally {
       setLoadingHint(null);
-      focusActiveBox();
+      setTimeout(() => {
+        focusActiveBox();
+      }, 20);
     }
   };
 
@@ -452,31 +542,41 @@ function App() {
       return;
     }
 
-    if (isRandomLetterDisabled) {
-      return;
-    }
+    const currentUsed = wordRandomLettersUsedRef.current;
+    const currentLocked = lockedIndicesRef.current;
+    const len = currentWord.answer.length;
+    const currentLetters =
+      lettersRef.current.length === len ? [...lettersRef.current] : Array(len).fill('');
 
-    // Collect indices where letter is not yet locked
+    // Check remaining quota synchronously (prevents rapid double-click race conditions)
+    const remaining = isHardcore
+      ? (hardcoreHintsLeft['random-letter'] !== undefined ? hardcoreHintsLeft['random-letter'] : maxHcRandomLetterHints)
+      : Math.max(0, maxRandomLettersForWord - currentUsed);
+
+    // Collect non-first indices (1..len-1) where letter is not yet locked
+    // Index 0 is reserved exclusively for the 1st Letter hint so they never overlap
     const unlockedIndices = [];
-    for (let i = 0; i < currentWord.answer.length; i++) {
-      if (!lockedIndices.includes(i)) {
+    for (let i = 1; i < len; i++) {
+      if (!currentLocked.includes(i)) {
         unlockedIndices.push(i);
       }
     }
 
-    if (unlockedIndices.length === 0) {
-      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
-      setSuccessToast({
-        points: 0,
-        message: 'All letters in this word are already revealed!'
-      });
-      toastTimeoutRef.current = setTimeout(() => setSuccessToast(null), 2000);
+    if (remaining <= 0 || unlockedIndices.length === 0) {
+      if (unlockedIndices.length === 0) {
+        if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+        setSuccessToast({
+          points: 0,
+          message: 'All other letters in this word are already revealed!'
+        });
+        toastTimeoutRef.current = setTimeout(() => setSuccessToast(null), 2000);
+      }
       return;
     }
 
     // Prioritize indices that aren't yet filled with the correct letter
     const incorrectOrEmpty = unlockedIndices.filter(
-      (i) => letters[i]?.toUpperCase() !== currentWord.answer[i]?.toUpperCase()
+      (i) => currentLetters[i]?.toUpperCase() !== currentWord.answer[i]?.toUpperCase()
     );
     const candidatePool = incorrectOrEmpty.length > 0 ? incorrectOrEmpty : unlockedIndices;
 
@@ -484,12 +584,14 @@ function App() {
     const chosenIdx = candidatePool[Math.floor(Math.random() * candidatePool.length)];
     const correctChar = currentWord.answer[chosenIdx].toUpperCase();
 
-    const newLetters = [...letters];
-    newLetters[chosenIdx] = correctChar;
-    setLetters(newLetters);
-    setUserInput(newLetters.join(''));
-    setLockedIndices((prev) => (prev.includes(chosenIdx) ? prev : [...prev, chosenIdx]));
-    setWordRandomLettersUsed((prev) => prev + 1);
+    currentLetters[chosenIdx] = correctChar;
+    const nextLocked = currentLocked.includes(chosenIdx)
+      ? currentLocked
+      : [...currentLocked, chosenIdx];
+
+    updateLetters(currentLetters);
+    updateLockedIndices(nextLocked);
+    updateWordRandomLettersUsed(currentUsed + 1);
 
     if (isHardcore) {
       setHardcoreHintsLeft((prev) => ({
@@ -506,8 +608,8 @@ function App() {
     toastTimeoutRef.current = setTimeout(() => setSuccessToast(null), 2000);
 
     setTimeout(() => {
-      const nextEmpty = newLetters.findIndex(
-        (l, idx) => !l && !lockedIndices.includes(idx) && idx !== chosenIdx
+      const nextEmpty = currentLetters.findIndex(
+        (l, idx) => !l && !nextLocked.includes(idx)
       );
       if (nextEmpty !== -1 && boxRefs.current[nextEmpty]) {
         boxRefs.current[nextEmpty].focus();
@@ -579,9 +681,9 @@ function App() {
     setRevealedAnswer(null);
     setCurrentWord(null);
     currentWordRef.current = null;
-    setUserInput('');
-    setLetters([]);
-    setLockedIndices([]);
+    updateLetters([]);
+    updateLockedIndices([]);
+    updateWordRandomLettersUsed(0);
     setHints({ category: null, definition: null, 'first-letter': null });
     setScore(0);
     setCurrentWordNumber(1);
@@ -601,7 +703,7 @@ function App() {
     }
     endTimeRef.current = null;
     pausedRemainingMsRef.current = null;
-  }, []);
+  }, [updateLetters, updateLockedIndices, updateWordRandomLettersUsed]);
 
   // Start the game on clicking "Play"
   const handleStartGame = async () => {
@@ -618,7 +720,7 @@ function App() {
 
     setScore(0);
     if (mode !== 'casual') {
-      setStreaks((prev) => ({ ...prev, [mode]: 0 }));
+      setStreaks((prev) => ({ ...prev, [activeStatsKey]: 0 }));
     }
     setCurrentWordNumber(1);
     currentWordNumberRef.current = 1;
@@ -636,7 +738,8 @@ function App() {
     setTotalTries(0);
     setTotalCorrectTries(0);
     setShowBreakdownModal(false);
-    setLockedIndices([]);
+    updateLockedIndices([]);
+    updateWordRandomLettersUsed(0);
     await fetchNewWord(mode, difficulty, true);
   };
 
@@ -655,7 +758,7 @@ function App() {
 
     setScore(0);
     if (mode !== 'casual') {
-      setStreaks((prev) => ({ ...prev, [mode]: 0 }));
+      setStreaks((prev) => ({ ...prev, [activeStatsKey]: 0 }));
     }
     setCurrentWordNumber(1);
     currentWordNumberRef.current = 1;
@@ -672,7 +775,8 @@ function App() {
     setTotalTries(0);
     setTotalCorrectTries(0);
     setShowBreakdownModal(false);
-    setLockedIndices([]);
+    updateLockedIndices([]);
+    updateWordRandomLettersUsed(0);
     await fetchNewWord(mode, difficulty, true);
   };
 
@@ -685,32 +789,30 @@ function App() {
 
   // Handle typing and auto-advancing across Wordle letter boxes (skipping locked boxes)
   const handleBoxChange = (index, e) => {
-    if (lockedIndices.includes(index)) return;
+    if (lockedIndicesRef.current.includes(index)) return;
 
     const val = e.target.value;
     const char = val.slice(-1).toUpperCase();
 
     if (!val) {
-      const newLetters = [...letters];
+      const newLetters = [...lettersRef.current];
       newLetters[index] = '';
-      setLetters(newLetters);
-      setUserInput(newLetters.join(''));
+      updateLetters(newLetters);
       if (isWrong) setIsWrong(false);
       return;
     }
 
     if (!/^[A-Z]$/.test(char)) return;
 
-    const newLetters = [...letters];
+    const newLetters = [...lettersRef.current];
     newLetters[index] = char;
-    setLetters(newLetters);
-    setUserInput(newLetters.join(''));
+    updateLetters(newLetters);
     if (isWrong) setIsWrong(false);
 
     // Auto-advance to the next unlocked box
     let nextIdx = -1;
-    for (let i = index + 1; i < letters.length; i++) {
-      if (!lockedIndices.includes(i)) {
+    for (let i = index + 1; i < newLetters.length; i++) {
+      if (!lockedIndicesRef.current.includes(i)) {
         nextIdx = i;
         break;
       }
@@ -723,14 +825,16 @@ function App() {
 
   const handleBoxKeyDown = (index, e) => {
     if (isWrong) setIsWrong(false);
+    const currentLetters = lettersRef.current;
+    const currentLocked = lockedIndicesRef.current;
 
     // If currently focused on a locked box, prevent direct edits or deletions
-    if (lockedIndices.includes(index)) {
+    if (currentLocked.includes(index)) {
       if (e.key === 'Backspace' || e.key === 'Delete') {
         e.preventDefault();
         let prevUnlocked = -1;
         for (let i = index - 1; i >= 0; i--) {
-          if (!lockedIndices.includes(i)) {
+          if (!currentLocked.includes(i)) {
             prevUnlocked = i;
             break;
           }
@@ -745,21 +849,20 @@ function App() {
       if (/^[a-zA-Z]$/.test(e.key)) {
         e.preventDefault();
         let nextUnlocked = -1;
-        for (let i = index + 1; i < letters.length; i++) {
-          if (!lockedIndices.includes(i)) {
+        for (let i = index + 1; i < currentLetters.length; i++) {
+          if (!currentLocked.includes(i)) {
             nextUnlocked = i;
             break;
           }
         }
         if (nextUnlocked === -1) {
-          nextUnlocked = letters.findIndex((_, i) => !lockedIndices.includes(i));
+          nextUnlocked = currentLetters.findIndex((_, i) => !currentLocked.includes(i));
         }
         if (nextUnlocked !== -1) {
           const char = e.key.toUpperCase();
-          const newLetters = [...letters];
+          const newLetters = [...currentLetters];
           newLetters[nextUnlocked] = char;
-          setLetters(newLetters);
-          setUserInput(newLetters.join(''));
+          updateLetters(newLetters);
           boxRefs.current[nextUnlocked]?.focus();
           boxRefs.current[nextUnlocked]?.select();
         }
@@ -772,29 +875,27 @@ function App() {
 
       let prevUnlocked = -1;
       for (let i = index - 1; i >= 0; i--) {
-        if (!lockedIndices.includes(i)) {
+        if (!currentLocked.includes(i)) {
           prevUnlocked = i;
           break;
         }
       }
 
-      if (letters[index] && !lockedIndices.includes(index)) {
+      if (currentLetters[index] && !currentLocked.includes(index)) {
         // Clear current box and move focus to previous unlocked box
-        const newLetters = [...letters];
+        const newLetters = [...currentLetters];
         newLetters[index] = '';
-        setLetters(newLetters);
-        setUserInput(newLetters.join(''));
+        updateLetters(newLetters);
 
         if (prevUnlocked !== -1) {
           boxRefs.current[prevUnlocked]?.focus();
           boxRefs.current[prevUnlocked]?.select?.();
         }
-      } else if (!letters[index] && prevUnlocked !== -1) {
+      } else if (!currentLetters[index] && prevUnlocked !== -1) {
         // Current box is already empty: clear previous unlocked box and focus it
-        const newLetters = [...letters];
+        const newLetters = [...currentLetters];
         newLetters[prevUnlocked] = '';
-        setLetters(newLetters);
-        setUserInput(newLetters.join(''));
+        updateLetters(newLetters);
         boxRefs.current[prevUnlocked]?.focus();
         boxRefs.current[prevUnlocked]?.select?.();
       }
@@ -803,7 +904,7 @@ function App() {
       e.preventDefault();
       boxRefs.current[index - 1]?.focus();
       boxRefs.current[index - 1]?.select();
-    } else if (e.key === 'ArrowRight' && index < letters.length - 1) {
+    } else if (e.key === 'ArrowRight' && index < currentLetters.length - 1) {
       e.preventDefault();
       boxRefs.current[index + 1]?.focus();
       boxRefs.current[index + 1]?.select();
@@ -818,25 +919,26 @@ function App() {
     const pasted = e.clipboardData.getData('text').trim().replace(/[^a-zA-Z]/g, '').toUpperCase();
     if (!pasted) return;
 
-    const newLetters = [...letters];
+    const currentLetters = lettersRef.current;
+    const currentLocked = lockedIndicesRef.current;
+    const newLetters = [...currentLetters];
     let pasteCharIdx = 0;
     let lastModifiedIdx = index;
 
-    for (let i = index; i < letters.length && pasteCharIdx < pasted.length; i++) {
-      if (!lockedIndices.includes(i)) {
+    for (let i = index; i < currentLetters.length && pasteCharIdx < pasted.length; i++) {
+      if (!currentLocked.includes(i)) {
         newLetters[i] = pasted[pasteCharIdx];
         lastModifiedIdx = i;
         pasteCharIdx++;
       }
     }
 
-    setLetters(newLetters);
-    setUserInput(newLetters.join(''));
+    updateLetters(newLetters);
     if (isWrong) setIsWrong(false);
 
     let nextFocus = -1;
-    for (let i = lastModifiedIdx + 1; i < letters.length; i++) {
-      if (!lockedIndices.includes(i)) {
+    for (let i = lastModifiedIdx + 1; i < currentLetters.length; i++) {
+      if (!currentLocked.includes(i)) {
         nextFocus = i;
         break;
       }
@@ -909,8 +1011,8 @@ function App() {
 
         // Streaks and streak bonus are completely disabled for casual mode
         if (mode !== 'casual') {
-          newStreak = (streaks[mode] || 0) + 1;
-          setStreaks((prev) => ({ ...prev, [mode]: newStreak }));
+          newStreak = (streaks[activeStatsKey] || 0) + 1;
+          setStreaks((prev) => ({ ...prev, [activeStatsKey]: newStreak }));
 
           const streakBonus = (newStreak - 1) * 2;
           pointsEarned += streakBonus;
@@ -927,9 +1029,9 @@ function App() {
             }
           }
 
-          if (newStreak > (bestStreaks[mode] || 0)) {
+          if (newStreak > (bestStreaks[activeStatsKey] || 0)) {
             setBestStreaks((prev) => {
-              const updated = { ...prev, [mode]: newStreak };
+              const updated = { ...prev, [activeStatsKey]: newStreak };
               localStorage.setItem('jumble_best_streaks_v2', JSON.stringify(updated));
               return updated;
             });
@@ -939,10 +1041,10 @@ function App() {
         const newScore = score + pointsEarned;
         setScore(newScore);
 
-        // Update high score per mode
-        if (newScore > (highScores[mode] || 0)) {
+        // Update high score per mode/submode
+        if (newScore > (highScores[activeStatsKey] || 0)) {
           setHighScores((prev) => {
-            const updated = { ...prev, [mode]: newScore };
+            const updated = { ...prev, [activeStatsKey]: newScore };
             localStorage.setItem('jumble_high_scores_v2', JSON.stringify(updated));
             return updated;
           });
@@ -953,8 +1055,8 @@ function App() {
         setRoundSolvedCount(newSolvedCount);
 
         // Release all locks and reset hint counter for next word
-        setLockedIndices([]);
-        setWordRandomLettersUsed(0);
+        updateLockedIndices([]);
+        updateWordRandomLettersUsed(0);
 
         // Floating toast (hide streak info in casual mode)
         if (toastTimeoutRef.current) {
@@ -1048,9 +1150,9 @@ function App() {
     currentWordTriesRef.current = 0;
 
     if (mode !== 'casual') {
-      const activeStreak = streaks[mode] || 0;
+      const activeStreak = streaks[activeStatsKey] || 0;
       if (!isTimeUp && activeStreak > 0) {
-        setStreaks((prev) => ({ ...prev, [mode]: 0 }));
+        setStreaks((prev) => ({ ...prev, [activeStatsKey]: 0 }));
         setStreakBrokenNotice(true);
         setTimeout(() => setStreakBrokenNotice(false), 3000);
       } else {
@@ -1061,8 +1163,8 @@ function App() {
     }
 
     // Release all locks and reset hint counter on skip
-    setLockedIndices([]);
-    setWordRandomLettersUsed(0);
+    updateLockedIndices([]);
+    updateWordRandomLettersUsed(0);
 
     // Check if skipping the last word completes the round
     if (!isEndlessMode && currentWordNumber >= targetWordsCount) {
@@ -1111,7 +1213,7 @@ function App() {
   const handleConfirmQuit = () => {
     setShowQuitModal(false);
     if (mode !== 'casual') {
-      setStreaks((prev) => ({ ...prev, [mode]: 0 }));
+      setStreaks((prev) => ({ ...prev, [activeStatsKey]: 0 }));
     }
     resetToIdleState();
     setTimeLeft(mode === 'endless' ? (endlessTimerOption === 'untimed' ? null : getEndlessInitialDuration()) : getActiveDuration(mode));
@@ -1127,30 +1229,27 @@ function App() {
     }
     if (newMode === 'endless') {
       setTimeLeft(endlessTimerOption !== 'untimed' ? getEndlessInitialDuration() : null);
-    } else if (newMode === 'custom_timed') {
-      setTimeLeft(getCustomTimedDuration());
+    } else if (newMode === 'timed') {
+      setTimeLeft(getTimedDuration());
     } else {
       setTimeLeft(MODE_CONFIG[newMode]?.duration || null);
     }
   };
 
-  // Switch custom timed mode duration option ('15' | '30' | '45' | '60' | 'custom')
-  const handleCustomTimedOptionChange = (option) => {
+  // Switch timed sub-mode option ('speed' | 'blitz' | '15' | '30' | '45' | '60' | 'custom')
+  const handleTimedOptionChange = (option) => {
     if (isLocked) return;
     if (gameStarted) {
       resetToIdleState();
     }
-    setCustomTimedOption(option);
-    const sec = option === 'custom'
-      ? Math.max(5, Math.min(300, parseInt(customTimedSeconds, 10) || 30))
-      : parseInt(option, 10) || 30;
-    setTimeLeft(sec);
+    setTimedOption(option);
+    setTimeLeft(getTimedDuration(option));
   };
 
   const handleCustomTimedSecondsChange = (e) => {
     const val = Math.max(5, Math.min(300, parseInt(e.target.value, 10) || 5));
     setCustomTimedSeconds(val);
-    if (customTimedOption === 'custom') {
+    if (timedOption === 'custom') {
       setTimeLeft(val);
     }
   };
@@ -1274,22 +1373,23 @@ function App() {
 
       if (e.key === 'Backspace') {
         e.preventDefault();
+        const currentLetters = lettersRef.current;
+        const currentLocked = lockedIndicesRef.current;
         let lastFilled = -1;
-        for (let i = letters.length - 1; i >= 0; i--) {
-          if (letters[i] && !lockedIndices.includes(i)) {
+        for (let i = currentLetters.length - 1; i >= 0; i--) {
+          if (currentLetters[i] && !currentLocked.includes(i)) {
             lastFilled = i;
             break;
           }
         }
         if (lastFilled !== -1) {
-          const newLetters = [...letters];
+          const newLetters = [...currentLetters];
           newLetters[lastFilled] = '';
-          setLetters(newLetters);
-          setUserInput(newLetters.join(''));
+          updateLetters(newLetters);
 
           let prevUnlocked = -1;
           for (let i = lastFilled - 1; i >= 0; i--) {
-            if (!lockedIndices.includes(i)) {
+            if (!currentLocked.includes(i)) {
               prevUnlocked = i;
               break;
             }
@@ -1298,7 +1398,7 @@ function App() {
           boxRefs.current[focusTarget]?.focus();
           boxRefs.current[focusTarget]?.select?.();
         } else {
-          const firstUnlocked = letters.findIndex((_, i) => !lockedIndices.includes(i));
+          const firstUnlocked = currentLetters.findIndex((_, i) => !currentLocked.includes(i));
           if (firstUnlocked !== -1) {
             boxRefs.current[firstUnlocked]?.focus();
           }
@@ -1309,25 +1409,26 @@ function App() {
       if (/^[a-zA-Z]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
         const char = e.key.toUpperCase();
-        let targetIdx = letters.findIndex((l, i) => !l && !lockedIndices.includes(i));
+        const currentLetters = lettersRef.current;
+        const currentLocked = lockedIndicesRef.current;
+        let targetIdx = currentLetters.findIndex((l, i) => !l && !currentLocked.includes(i));
         if (targetIdx === -1) {
-          for (let i = letters.length - 1; i >= 0; i--) {
-            if (!lockedIndices.includes(i)) {
+          for (let i = currentLetters.length - 1; i >= 0; i--) {
+            if (!currentLocked.includes(i)) {
               targetIdx = i;
               break;
             }
           }
         }
         if (targetIdx !== -1) {
-          const newLetters = [...letters];
+          const newLetters = [...currentLetters];
           newLetters[targetIdx] = char;
-          setLetters(newLetters);
-          setUserInput(newLetters.join(''));
+          updateLetters(newLetters);
           if (isWrong) setIsWrong(false);
 
           let nextFocus = -1;
-          for (let i = targetIdx + 1; i < letters.length; i++) {
-            if (!lockedIndices.includes(i)) {
+          for (let i = targetIdx + 1; i < currentLetters.length; i++) {
+            if (!currentLocked.includes(i)) {
               nextFocus = i;
               break;
             }
@@ -1464,34 +1565,26 @@ function App() {
             </div>
           )}
 
-          {/* Custom Timed Sub-toggle (Shown when Custom Timed Mode is selected) */}
-          {mode === 'custom_timed' && (
+          {/* Timed Sub-mode Selector (Shown when Timed Mode is selected) */}
+          {mode === 'timed' && (
             <div className="selector-group">
-              <span className="selector-label">Timer per Word</span>
+              <span className="selector-label">Timed Mode</span>
               <nav
                 className={`custom-timed-selector ${isLocked ? 'locked' : ''}`}
-                aria-label="Custom Timed Mode Duration"
+                aria-label="Timed Sub-mode"
               >
-                {['15', '30', '45', '60'].map((sec) => (
+                {TIMED_SUBMODES.map((sub) => (
                   <button
-                    key={sec}
+                    key={sub.id}
                     type="button"
-                    className={`timer-option-btn ${customTimedOption === sec ? 'active' : ''}`}
+                    className={`timer-option-btn ${timedOption === sub.id ? 'active' : ''}`}
                     disabled={isLocked}
-                    onClick={() => handleCustomTimedOptionChange(sec)}
+                    onClick={() => handleTimedOptionChange(sub.id)}
                   >
-                    {sec}s
+                    {sub.label}
                   </button>
                 ))}
-                <button
-                  type="button"
-                  className={`timer-option-btn ${customTimedOption === 'custom' ? 'active' : ''}`}
-                  disabled={isLocked}
-                  onClick={() => handleCustomTimedOptionChange('custom')}
-                >
-                  Custom
-                </button>
-                {customTimedOption === 'custom' && (
+                {timedOption === 'custom' && (
                   <div className="custom-time-wrapper">
                     <input
                       type="number"
@@ -1578,7 +1671,7 @@ function App() {
                       : 'Toggle Hardcore rules (Strict inventory: 3 skips, limited hints for run)'
                   }
                 >
-                  ⚡ Hardcore {isHardcore ? 'ON' : 'OFF'}
+                  Hardcore {isHardcore ? 'ON' : 'OFF'}
                 </button>
               )}
             </nav>
@@ -1596,7 +1689,7 @@ function App() {
       {isHardcore && (
         <section className="hardcore-hud" aria-label="Hardcore inventory">
           <div className="hardcore-hud-title">
-            <span>⚡ Hardcore Rules</span>
+            <span>Hardcore Rules</span>
           </div>
           <div className="hardcore-badges">
             <span
@@ -1661,10 +1754,16 @@ function App() {
               ? isEndlessTimed
                 ? `Endless • ${endlessTimerOption === '60' ? '1 Min' : endlessTimerOption === '120' ? '2 Mins' : `${customEndlessTime}s`}`
                 : 'Endless • Untimed'
-              : mode === 'custom_timed'
-                ? `${targetWordsCount} Words • ${customTimedOption === 'custom' ? `${customTimedSeconds}s` : `${customTimedOption}s`}`
+              : mode === 'timed'
+                ? `${
+                    timedOption === 'speed'
+                      ? 'Speed 20s'
+                      : timedOption === 'blitz'
+                        ? 'Blitz 10s'
+                        : `${timedOption === 'custom' ? customTimedSeconds : timedOption}s`
+                  } • ${targetWordsCount} Words`
                 : `${targetWordsCount} Words`
-          } • {DIFFICULTY_CONFIG[difficulty]?.label}{isHardcore ? ' • ⚡ Hardcore' : ''})
+          } • {DIFFICULTY_CONFIG[difficulty]?.label}{isHardcore ? ' • Hardcore' : ''})
         </button>
       )}
 
@@ -1766,7 +1865,7 @@ function App() {
                   title="Click to view word-by-word tries breakdown"
                 >
                   <div className="round-stat-item-label">
-                    Accuracy <span className="stat-clickable-hint">📊 View Breakdown</span>
+                    Accuracy <span className="stat-clickable-hint">View Breakdown</span>
                   </div>
                   <div className="round-stat-item-value">{accuracyPercent}%</div>
                   <div className="round-stat-item-sub">
@@ -1789,7 +1888,7 @@ function App() {
                 className="breakdown-trigger-btn"
                 onClick={() => setShowBreakdownModal(true)}
               >
-                📊 View Tries Breakdown per Word
+                View Tries Breakdown per Word
               </button>
               <div className="button-group">
                 <button id="again-btn" onClick={handleRestartRound}>
@@ -1828,7 +1927,7 @@ function App() {
                   <>
                     {' '}
                     <span className="difficulty-tag hardcore">
-                      ⚡ Hardcore
+                      Hardcore
                     </span>
                   </>
                 )}
@@ -1848,10 +1947,7 @@ function App() {
                     type="button"
                     className={`hint-btn ${hints.category ? 'revealed' : ''}`}
                     onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      handleGetHint('category');
-                      focusActiveBox();
-                    }}
+                    onClick={() => handleGetHint('category')}
                     disabled={
                       Boolean(hints.category) ||
                       (isHardcore && hardcoreHintsLeft.category <= 0) ||
@@ -1871,10 +1967,7 @@ function App() {
                     type="button"
                     className={`hint-btn ${hints.definition ? 'revealed' : ''}`}
                     onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      handleGetHint('definition');
-                      focusActiveBox();
-                    }}
+                    onClick={() => handleGetHint('definition')}
                     disabled={
                       Boolean(hints.definition) ||
                       (isHardcore && hardcoreHintsLeft.definition <= 0) ||
@@ -1894,10 +1987,7 @@ function App() {
                     type="button"
                     className={`hint-btn ${hints['first-letter'] ? 'revealed' : ''}`}
                     onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      handleGetHint('first-letter');
-                      focusActiveBox();
-                    }}
+                    onClick={() => handleGetHint('first-letter')}
                     disabled={
                       Boolean(hints['first-letter']) ||
                       (isHardcore && hardcoreHintsLeft['first-letter'] <= 0) ||

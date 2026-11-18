@@ -98,6 +98,7 @@ h1 {
   box-shadow: 0 2px 8px rgba(183, 28, 28, 0.45);
 }
 
+.mode-btn.timed.active,
 .mode-btn.custom_timed.active {
   background: linear-gradient(135deg, #0277bd, #00838f);
   box-shadow: 0 2px 8px rgba(2, 119, 189, 0.4);

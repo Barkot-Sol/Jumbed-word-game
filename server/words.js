@@ -70,6 +70,155 @@ export function jumbleWord(word) {
   return shuffled.join('');
 }
 
+const META_DEFINITION_REGEX =
+  /^(plural|singular|past tense|past participle|present participle|third-person|comparative|superlative|alternative spelling|alternative form|obsolete form|archaic form|inflection|gerund|diminutive|feminine|masculine|variant|contraction|abbreviation)\b/i;
+
+const COMMON_SUFFIXES = [
+  'iness', 'ation', 'ition', 'ative', 'itive', 'ical', 'ious', 'ment', 'ness',
+  'tion', 'sion', 'ance', 'ence', 'ancy', 'ency', 'able', 'ible', 'ship',
+  'hood', 'ward', 'ling', 'less', 'uity', 'ers', 'ies', 'ied', 'ier', 'iest',
+  'ing', 'est', 'ous', 'ful', 'ial', 'ive', 'ize', 'ise', 'ist', 'ism',
+  'ity', 'ion', 'ant', 'ent', 'ure', 'age', 'ary', 'ory', 'ed', 'er', 'es',
+  'ly', 'al', 'ic', 's'
+];
+
+const INFLECTION_TAILS = new Set([
+  's', 'es', 'ed', 'd', 'ing', 'er', 'ers', 'est', 'ly', 'ness', 'ment',
+  'ion', 'tion', 'ation', 'ition', 'sion', 'ance', 'ence', 'ancy', 'ency',
+  'ant', 'ent', 'ure', 'age', 'al', 'ial', 'ic', 'ical', 'ous', 'ious',
+  'uous', 'ful', 'less', 'able', 'ible', 'ity', 'uity', 'ive', 'ative',
+  'itive', 'ize', 'ise', 'ist', 'ism', 'y', 'ry', 'ary', 'ory', 'ship',
+  'hood', 'ward', 'like', 'work', 'land', 'man', 'men', 'maker', 'holder'
+]);
+
+/**
+ * Extract morphological stems and root variants of the target word
+ */
+function buildWordStems(word) {
+  const w = (word || '').toLowerCase().trim();
+  const stems = new Set([w]);
+  if (w.length < 4) return stems;
+
+  for (const suffix of COMMON_SUFFIXES) {
+    if (w.endsWith(suffix)) {
+      const base = w.slice(0, -suffix.length);
+      if (suffix === 'iness' || suffix === 'ies' || suffix === 'ied' || suffix === 'ier' || suffix === 'iest') {
+        if (base.length >= 3) {
+          stems.add(base + 'y');
+        }
+      }
+      if (base.length >= 4) {
+        stems.add(base);
+        stems.add(base + 'e');
+        if (base.length >= 5 && base[base.length - 1] === base[base.length - 2]) {
+          stems.add(base.slice(0, -1));
+        }
+      } else if (base.length === 3 && ['ing', 'ed', 'er', 'ers', 'est'].includes(suffix)) {
+        if (base[base.length - 1] === base[base.length - 2]) {
+          // e.g. 'running' -> 'runn' (len 4 handled above), 'swimming' -> 'swimm' (len 5 handled above)
+          stems.add(base.slice(0, -1));
+        }
+      }
+    }
+  }
+
+  // Handle doubled consonants producing 4-char stems like 'runn' -> 'run'
+  for (const s of [...stems]) {
+    if (s.length >= 4 && s[s.length - 1] === s[s.length - 2] && /[bcdfghjklmnpqrstvwxz]/.test(s[s.length - 1])) {
+      const deduped = s.slice(0, -1);
+      if (deduped.length >= 3) {
+        stems.add(deduped);
+      }
+    }
+  }
+
+  return stems;
+}
+
+/**
+ * Check if a single alphabetic token in a definition reveals the target word
+ */
+function isOffendingToken(rawToken, word, stems) {
+  const token = rawToken.toLowerCase();
+  const w = word.toLowerCase();
+  if (!token || token.length < 3) return false;
+
+  // Exact match against word or any derived stem
+  if (token === w || stems.has(token)) {
+    return true;
+  }
+
+  // Token starts with the full target word (e.g. 'apples', 'household', 'tigers')
+  if (token.startsWith(w)) {
+    const tail = token.slice(w.length);
+    if (w.length >= 5 || INFLECTION_TAILS.has(tail)) {
+      return true;
+    }
+  }
+
+  // Token contains a long target word as substring (e.g. 'unbroken', 'subbridge')
+  if (w.length >= 5 && token.includes(w)) {
+    return true;
+  }
+
+  // Token is an inflection/derivative of one of the target word's stems (length >= 4)
+  for (const stem of stems) {
+    if (stem.length >= 4 && token.startsWith(stem)) {
+      const tail = token.slice(stem.length);
+      if (tail === '' || INFLECTION_TAILS.has(tail)) {
+        return true;
+      }
+    }
+  }
+
+  // Closed compound check: token (>=4 chars) is a clean prefix or suffix of a longer word (>=8 chars)
+  if (token.length >= 4 && w.length - token.length >= 4) {
+    if (w.startsWith(token) || w.endsWith(token)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Check whether a definition leaks/mentions the target word (or its root/inflections)
+ */
+export function definitionMentionsWord(definition, word) {
+  if (!definition || !word) return false;
+  const trimmed = definition.trim();
+  if (!trimmed) return false;
+
+  // Reject meta/inflection definitions like "Plural of ...", "Past tense of ..."
+  if (META_DEFINITION_REGEX.test(trimmed)) {
+    return true;
+  }
+
+  const stems = buildWordStems(word);
+  const tokens = trimmed.match(/[a-zA-Z]+/g) || [];
+  for (const token of tokens) {
+    if (isOffendingToken(token, word, stems)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Safeguard sanitizer: redacts any occurrence of the target word or its stem in a definition
+ */
+export function sanitizeDefinition(definition, word) {
+  if (!definition || !word) return definition || '';
+  const stems = buildWordStems(word);
+  return definition.replace(/[a-zA-Z]+/g, (token) => {
+    if (isOffendingToken(token, word, stems)) {
+      return '_____';
+    }
+    return token;
+  });
+}
+
 /**
  * Parse and clean raw definition from Datamuse 'defs' entry
  */
@@ -108,6 +257,7 @@ function parseDatamuseDef(rawDef) {
 
 /**
  * Fetch rich definition from the Free Dictionary API (dictionaryapi.dev)
+ * Scans all meanings and definitions to select one that never mentions the target word.
  */
 async function fetchFromFreeDictionary(word) {
   try {
@@ -118,23 +268,32 @@ async function fetchFromFreeDictionary(word) {
 
     if (res.ok) {
       const data = await res.json();
-      const firstEntry = data[0];
-      const meaning = firstEntry?.meanings?.[0];
-      const def = meaning?.definitions?.[0]?.definition;
-      const pos = meaning?.partOfSpeech;
+      if (Array.isArray(data)) {
+        for (const entry of data) {
+          for (const meaning of entry?.meanings || []) {
+            const pos = meaning?.partOfSpeech;
+            for (const defObj of meaning?.definitions || []) {
+              const def = defObj?.definition;
+              if (!def) continue;
 
-      if (def) {
-        let cleanDef = def.trim();
-        if (cleanDef.length > 0) {
-          cleanDef = cleanDef.charAt(0).toUpperCase() + cleanDef.slice(1);
-          if (!cleanDef.endsWith('.') && !cleanDef.endsWith('!') && !cleanDef.endsWith('?')) {
-            cleanDef += '.';
+              let cleanDef = def.trim();
+              if (cleanDef.length > 0) {
+                cleanDef = cleanDef.charAt(0).toUpperCase() + cleanDef.slice(1);
+                if (!cleanDef.endsWith('.') && !cleanDef.endsWith('!') && !cleanDef.endsWith('?')) {
+                  cleanDef += '.';
+                }
+              }
+
+              // Only accept definitions that do NOT mention the target word or its stem
+              if (cleanDef && !definitionMentionsWord(cleanDef, word)) {
+                return {
+                  definition: cleanDef,
+                  partOfSpeech: pos ? pos.charAt(0).toUpperCase() + pos.slice(1) : 'General'
+                };
+              }
+            }
           }
         }
-        return {
-          definition: cleanDef,
-          partOfSpeech: pos ? pos.charAt(0).toUpperCase() + pos.slice(1) : 'General'
-        };
       }
     }
   } catch {
@@ -151,7 +310,7 @@ async function fetchWordsFromDictionaryApi(difficulty, count = 15) {
   const pattern = config.patterns[Math.floor(Math.random() * config.patterns.length)];
   const topicObj = TOPICS[Math.floor(Math.random() * TOPICS.length)];
 
-  const url = `https://api.datamuse.com/words?topics=${topicObj.topic}&sp=${pattern}&md=dp&max=${count * 3}`;
+  const url = `https://api.datamuse.com/words?topics=${topicObj.topic}&sp=${pattern}&md=dp&max=${count * 4}`;
 
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(3500) });
@@ -176,15 +335,24 @@ async function fetchWordsFromDictionaryApi(difficulty, count = 15) {
       const word = item.word.toLowerCase();
       if (usedWordsSet.has(word)) continue;
 
-      const parsedDef = parseDatamuseDef(item.defs[0]);
-      if (!parsedDef.definition) continue;
+      // Scan all returned definitions and pick the first one that does not mention the word itself
+      let chosenParsed = null;
+      for (const rawDef of item.defs) {
+        const parsed = parseDatamuseDef(rawDef);
+        if (parsed.definition && !definitionMentionsWord(parsed.definition, word)) {
+          chosenParsed = parsed;
+          break;
+        }
+      }
+
+      if (!chosenParsed) continue;
 
       results.push({
         answer: word,
         difficulty,
-        category: `${parsedDef.partOfSpeech} • ${topicObj.label}`,
-        definition: parsedDef.definition,
-        partOfSpeech: parsedDef.partOfSpeech,
+        category: `${chosenParsed.partOfSpeech} • ${topicObj.label}`,
+        definition: chosenParsed.definition,
+        partOfSpeech: chosenParsed.partOfSpeech,
         source: 'dictionary_api'
       });
     }
@@ -428,7 +596,7 @@ const SEED_WORDS = [
     answer: 'wildlife',
     difficulty: 'medium',
     category: 'Noun • Animals & Wildlife',
-    definition: 'Wild animals and vegetation living in a natural, undomesticated state.'
+    definition: 'Untamed animals and vegetation living in a natural, undomesticated state.'
   },
 
   // --- HARD (9 - 12 letters) ---
@@ -630,11 +798,13 @@ export async function getRandomWord(difficulty = null) {
 
   activeWordsMap.set(currentId, wordEntry);
 
-  // Asynchronously enrich definition with Free Dictionary API if available
+  // Asynchronously enrich definition with Free Dictionary API if available (only if clean)
   fetchFromFreeDictionary(wordEntry.answer).then((rich) => {
     if (rich && activeWordsMap.has(currentId)) {
       const existing = activeWordsMap.get(currentId);
-      existing.definition = rich.definition || existing.definition;
+      if (rich.definition && !definitionMentionsWord(rich.definition, existing.answer)) {
+        existing.definition = rich.definition;
+      }
       if (rich.partOfSpeech) {
         existing.partOfSpeech = rich.partOfSpeech;
         const topicPart = existing.category?.split('•')?.[1]?.trim() || 'General';
@@ -695,11 +865,16 @@ export async function getWordHint(id, hintType) {
         type: 'category',
         hint: word.category || `${word.partOfSpeech || 'General'} Vocabulary`
       };
-    case 'definition':
+    case 'definition': {
+      const rawDef = word.definition || 'A common English vocabulary word.';
+      const safeDef = definitionMentionsWord(rawDef, word.answer)
+        ? sanitizeDefinition(rawDef, word.answer)
+        : rawDef;
       return {
         type: 'definition',
-        hint: word.definition || 'A common English vocabulary word.'
+        hint: safeDef
       };
+    }
     case 'first-letter':
       return {
         type: 'first-letter',
